@@ -18,14 +18,14 @@ fn main() {
             .optimiser(optimiser::AdamW)
             .quantisations(&[QA, QB])
             .input(inputs::Chess768)
-            .output_buckets(outputs::Single)
+            .output_buckets(outputs::MaterialCount::<8>)
             .feature_transformer(hl_size)
-            .activate(Activation::CReLU)
+            .activate(Activation::SCReLU)
             .add_layer(1)
             .build();
 
         let schedule = TrainingSchedule {
-            net_id: format!("optimiser-benchmark-crelu-{hl_size}n"),
+            net_id: format!("optimiser-benchmark-screlu-8ob-{hl_size}n"),
             eval_scale: 400.0,
             ft_regularisation: 0.0,
             batch_size: 16_384,
