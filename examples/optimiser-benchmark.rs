@@ -20,12 +20,12 @@ fn main() {
             .input(inputs::Chess768)
             .output_buckets(outputs::Single)
             .feature_transformer(hl_size)
-            .activate(Activation::SCReLU)
+            .activate(Activation::CReLU)
             .add_layer(1)
             .build();
 
         let schedule = TrainingSchedule {
-            net_id: format!("optimiser-benchmark-screlu-{hl_size}n"),
+            net_id: format!("optimiser-benchmark-crelu-{hl_size}n"),
             eval_scale: 400.0,
             ft_regularisation: 0.0,
             batch_size: 16_384,
