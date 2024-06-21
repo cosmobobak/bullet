@@ -6,7 +6,7 @@ There's potentially a lot of elo available by adjusting the wdl
 and lr schedulers, depending on your dataset.
 */
 use bullet_lib::{
-    inputs, lr, optimiser, outputs, wdl, Activation, LocalSettings, Loss, TrainerBuilder, TrainingSchedule
+    inputs, lr, optimiser, outputs, wdl, Activation, LocalSettings, Loss, TrainerBuilder, TrainingSchedule,
 };
 
 const QA: i32 = 255;
@@ -18,14 +18,14 @@ fn main() {
             .optimiser(optimiser::AdamW)
             .quantisations(&[QA, QB])
             .input(inputs::Chess768)
-            .output_buckets(outputs::MaterialCount::<8>)
+            .output_buckets(outputs::Single)
             .feature_transformer(hl_size)
             .activate(Activation::SCReLU)
             .add_layer(1)
             .build();
 
         let schedule = TrainingSchedule {
-            net_id: format!("optimiser-benchmark-screlu-8ob-{hl_size}n"),
+            net_id: format!("optimiser-benchmark-screlu-warmup256-{hl_size}n"),
             eval_scale: 400.0,
             ft_regularisation: 0.0,
             batch_size: 16_384,
@@ -33,17 +33,14 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: 10,
             wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
-            lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 4 },
+            lr_scheduler: lr::Warmup { inner: lr::StepLR { start: 0.001, gamma: 0.1, step: 4 }, warmup_batches: 256 },
             loss_function: Loss::SigmoidMSE,
             save_rate: 100,
             optimiser_settings: optimiser::AdamWParams { decay: 0.01 },
         };
 
-        let settings = LocalSettings {
-            threads: 4,
-            data_file_paths: vec!["data/input.bin"],
-            output_directory: "checkpoints",
-        };
+        let settings =
+            LocalSettings { threads: 4, data_file_paths: vec!["data/input.bin"], output_directory: "checkpoints" };
 
         trainer.run(&schedule, &settings);
     }
