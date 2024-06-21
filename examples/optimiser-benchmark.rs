@@ -17,7 +17,16 @@ fn main() {
         let mut trainer = TrainerBuilder::default()
             .optimiser(optimiser::AdamW)
             .quantisations(&[QA, QB])
-            .input(inputs::Chess768)
+            .input(inputs::ChessBucketsMirrored::new([
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]))
             .output_buckets(outputs::Single)
             .feature_transformer(hl_size)
             .activate(Activation::SCReLU)
@@ -25,7 +34,7 @@ fn main() {
             .build();
 
         let schedule = TrainingSchedule {
-            net_id: format!("optimiser-benchmark-screlu-warmup256-{hl_size}n"),
+            net_id: format!("optimiser-benchmark-screlu-mirrored-{hl_size}n"),
             eval_scale: 400.0,
             ft_regularisation: 0.0,
             batch_size: 16_384,
@@ -33,7 +42,7 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: 10,
             wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
-            lr_scheduler: lr::Warmup { inner: lr::StepLR { start: 0.001, gamma: 0.1, step: 4 }, warmup_batches: 256 },
+            lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 4 },
             loss_function: Loss::SigmoidMSE,
             save_rate: 100,
             optimiser_settings: optimiser::AdamWParams { decay: 0.01 },
