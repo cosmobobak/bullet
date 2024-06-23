@@ -25,7 +25,7 @@ fn main() {
             .build();
 
         let schedule = TrainingSchedule {
-            net_id: format!("optimiser-benchmark-screlu-lineardecay-{hl_size}n"),
+            net_id: format!("optimiser-benchmark-screlu-warmupcosinedecay-{hl_size}n"),
             eval_scale: 400.0,
             ft_regularisation: 0.0,
             batch_size: 16_384,
@@ -33,7 +33,7 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: 10,
             wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
-            lr_scheduler: lr::LinearDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.1 * 0.1, final_superbatch: 10 },
+            lr_scheduler: lr::Warmup { inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.1 * 0.1, final_superbatch: 10 }, warmup_batches: 256 },
             loss_function: Loss::SigmoidMSE,
             save_rate: 100,
             optimiser_settings: optimiser::AdamWParams { decay: 0.01 },
