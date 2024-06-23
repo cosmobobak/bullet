@@ -116,7 +116,7 @@ impl LrScheduler for CosineDecayLR {
     fn lr(&self, _batch: usize, superbatch: usize) -> f32 {
         // scales from 0 to 1, ish
         let progress = superbatch as f32 / self.final_superbatch as f32;
-        let cosine_decay = 0.5 * (1.0 + (PI * progress).cos());
+        let cosine_decay = 1.0 - 0.5 * (1.0 + (PI * progress).cos());
         let diff = self.final_lr - self.initial_lr;
         let diff_to_apply = cosine_decay * diff;
         self.initial_lr + diff_to_apply
