@@ -56,12 +56,6 @@ fn main() {
     trainer.run(&schedule, &settings);
 }
 
-/*
-This is how you would load the network in rust.
-Commented out because it will error if it can't find the file.
-static NNUE: Network =
-    unsafe { std::mem::transmute(*include_bytes!("../checkpoints/simple-10/simple-10.bin")) };
-*/
 
 #[inline]
 /// Clipped ReLU - Activation Function.
@@ -84,6 +78,13 @@ pub struct Network {
     /// Scalar output bias.
     output_bias: i16,
 }
+
+/*
+This is how you would load the network in rust.
+Commented out because it will error if it can't find the file.
+static NNUE: Network =
+    unsafe { std::mem::transmute(*include_bytes!("../checkpoints/simple-10/simple-10.bin")) };
+*/
 
 impl Network {
     /// Calculates the output of the network, starting from the already

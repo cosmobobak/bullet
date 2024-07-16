@@ -41,12 +41,12 @@ fn main() {
         eval_scale: 400.0,
         batches_per_superbatch: 6104,
         start_superbatch: 1,
-        end_superbatch: 840,
+        end_superbatch: 60,
         wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
-        lr_scheduler: lr::StepLR {
-            start: 0.001,
-            gamma: 0.3,
-            step: 224,
+        lr_scheduler: lr::CosineDecayLR {
+            initial_lr: 0.001,
+            final_lr: 0.001 * 0.3 * 0.3 * 0.3,
+            final_superbatch: 60,
         },
         loss_function: Loss::SigmoidMSE,
         save_rate: 168,
