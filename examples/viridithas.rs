@@ -16,7 +16,7 @@ const QB: i32 = 64;
 
 fn main() {
     let mut trainer = TrainerBuilder::default()
-        .quantisations(&[403, 81])
+        .quantisations(&[255, 64])
         .optimiser(optimiser::AdamW)
         .input(inputs::ChessBucketsMirrored::new([
             0, 1, 2, 3,
