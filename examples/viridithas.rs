@@ -34,7 +34,7 @@ fn main() {
         .add_layer(1)
         .build();
 
-    let sbs = 82;
+    let sbs = 160;
     let schedule = TrainingSchedule {
         net_id: "t4".into(),
         batch_size: 16_384,
