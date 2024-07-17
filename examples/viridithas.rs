@@ -53,7 +53,7 @@ fn main() {
             warmup_batches: 200,
         },
         loss_function: Loss::SigmoidMSE,
-        save_rate: 168,
+        save_rate: 20,
         optimiser_settings: optimiser::AdamWParams {
             decay: 0.01,
             beta1: 0.9,
@@ -65,7 +65,7 @@ fn main() {
 
     let settings = LocalSettings {
         threads: 4,
-        data_file_paths: vec!["../../data/30m.data"],
+        data_file_paths: vec!["data/dataset.bin"],
         test_set: None,
         output_directory: "checkpoints",
     };
