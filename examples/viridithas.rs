@@ -34,19 +34,23 @@ fn main() {
         .add_layer(1)
         .build();
 
+    let sbs = 82;
     let schedule = TrainingSchedule {
-        net_id: "viridithas-annuep".into(),
+        net_id: "t4".into(),
         batch_size: 16_384,
         ft_regularisation: 0.0,
         eval_scale: 400.0,
         batches_per_superbatch: 6104,
         start_superbatch: 1,
-        end_superbatch: 60,
+        end_superbatch: sbs,
         wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
-        lr_scheduler: lr::CosineDecayLR {
-            initial_lr: 0.001,
-            final_lr: 0.001 * 0.3 * 0.3 * 0.3,
-            final_superbatch: 60,
+        lr_scheduler: lr::Warmup {
+            inner: lr::CosineDecayLR {
+                initial_lr: 0.001,
+                final_lr: 0.001 * 0.3 * 0.3 * 0.3,
+                final_superbatch: sbs,
+            },
+            warmup_batches: 200,
         },
         loss_function: Loss::SigmoidMSE,
         save_rate: 168,
