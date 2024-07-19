@@ -20,23 +20,23 @@ fn main() {
         .optimiser(optimiser::AdamW)
         .input(inputs::ChessBucketsMirrored::new([
             0, 1, 2, 3,
-            4, 4, 5, 5,
-            6, 6, 6, 6,
-            7, 7, 7, 7,
-            8, 8, 8, 8,
-            8, 8, 8, 8,
-            8, 8, 8, 8,
-            8, 8, 8, 8,
+            4, 5, 6, 7,
+            8, 8, 9, 9,
+            10, 10, 10, 10,
+            11, 11, 11, 11,
+            11, 11, 11, 11,
+            12, 12, 12, 12,
+            12, 12, 12, 12,
         ]))
         .output_buckets(outputs::MaterialCount::<8>)
-        .feature_transformer(1536)
+        .feature_transformer(2048)
         .activate(Activation::SCReLU)
         .add_layer(1)
         .build();
 
-    let sbs = 160;
+    let sbs = 200;
     let schedule = TrainingSchedule {
-        net_id: "t4".into(),
+        net_id: "t5".into(),
         batch_size: 16_384,
         ft_regularisation: 0.0,
         eval_scale: 400.0,
