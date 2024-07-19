@@ -20,30 +20,30 @@ fn main() {
         .optimiser(optimiser::AdamW)
         .input(inputs::ChessBucketsMirrored::new([
             0, 1, 2, 3,
-            4, 5, 6, 7,
-            8, 8, 9, 9,
-            10, 10, 10, 10,
-            11, 11, 11, 11,
-            11, 11, 11, 11,
-            12, 12, 12, 12,
-            12, 12, 12, 12,
+            4, 4, 5, 5,
+            6, 6, 6, 6,
+            7, 7, 7, 7,
+            8, 8, 8, 8,
+            8, 8, 8, 8,
+            8, 8, 8, 8,
+            8, 8, 8, 8,
         ]))
         .output_buckets(outputs::MaterialCount::<8>)
-        .feature_transformer(2048)
+        .feature_transformer(1536)
         .activate(Activation::SCReLU)
         .add_layer(1)
         .build();
 
-    let sbs = 200;
+    let sbs = 160;
     let schedule = TrainingSchedule {
-        net_id: "eternity".into(),
+        net_id: "warmup-exp".into(),
         batch_size: 16_384,
         ft_regularisation: 0.0,
         eval_scale: 400.0,
         batches_per_superbatch: 6104,
         start_superbatch: 1,
         end_superbatch: sbs,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+        wdl_scheduler: wdl::LinearWDL { start: 0.0, end: 0.5 },
         lr_scheduler: lr::Warmup {
             inner: lr::CosineDecayLR {
                 initial_lr: 0.001,
