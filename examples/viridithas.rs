@@ -9,7 +9,7 @@ use bullet_lib::{
     inputs, lr, optimiser, outputs, wdl, Activation, LocalSettings, Loss, TrainerBuilder, TrainingSchedule,
 };
 
-const HIDDEN_SIZE: usize = 16;
+const HIDDEN_SIZE: usize = 2048;
 const SCALE: i32 = 400;
 const QA: i32 = 255;
 const QB: i32 = 64;
@@ -20,30 +20,30 @@ fn main() {
         .optimiser(optimiser::AdamW)
         .input(inputs::ChessBucketsMirrored::new([
             0, 1, 2, 3,
-            4, 4, 5, 5,
-            6, 6, 6, 6,
-            7, 7, 7, 7,
-            8, 8, 8, 8,
-            8, 8, 8, 8,
-            8, 8, 8, 8,
-            8, 8, 8, 8,
+            4, 5, 6, 7,
+            8, 8, 9, 9,
+            10, 10, 10, 10,
+            11, 11, 11, 11,
+            11, 11, 11, 11,
+            12, 12, 12, 12,
+            12, 12, 12, 12,
         ]))
         .output_buckets(outputs::MaterialCount::<8>)
-        .feature_transformer(1536)
+        .feature_transformer(HIDDEN_SIZE)
         .activate(Activation::SCReLU)
         .add_layer(1)
         .build();
 
-    let sbs = 160;
+    let sbs = 400;
     let schedule = TrainingSchedule {
-        net_id: "warmup-exp".into(),
+        net_id: "pendragon".into(),
         batch_size: 16_384,
         ft_regularisation: 0.0,
         eval_scale: 400.0,
         batches_per_superbatch: 6104,
         start_superbatch: 1,
         end_superbatch: sbs,
-        wdl_scheduler: wdl::LinearWDL { start: 0.0, end: 0.5 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
         lr_scheduler: lr::Warmup {
             inner: lr::CosineDecayLR {
                 initial_lr: 0.001,
