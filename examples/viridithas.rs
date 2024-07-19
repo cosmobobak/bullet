@@ -36,7 +36,7 @@ fn main() {
 
     let sbs = 200;
     let schedule = TrainingSchedule {
-        net_id: "t5".into(),
+        net_id: "eternity".into(),
         batch_size: 16_384,
         ft_regularisation: 0.0,
         eval_scale: 400.0,
