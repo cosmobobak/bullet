@@ -48,7 +48,7 @@ const MARGIN: i32 = 40;
 /// 4k UHD
 const IMG_DIMS: (u32, u32) = (3840, 2160);
 
-const NOISY_PLOT_OPACITY: f64 = 0.06;
+const NOISY_PLOT_OPACITY: f64 = 0.03;
 
 /// Calculates the simple moving average
 fn moving_average(data: &[(usize, f64)], window_size: usize) -> Vec<(usize, f64)> {
@@ -195,9 +195,6 @@ impl GraphOptions {
             .draw()?;
 
         for (i, (run_name, data)) in data_sequences.iter().enumerate() {
-            let window_size = 10;
-            let smoothed_loss = moving_average(data, window_size);
-
             chart
                 .draw_series(LineSeries::new(
                     data.iter().map(|&(x, y)| (x as i32, y)),
@@ -211,6 +208,11 @@ impl GraphOptions {
                         ShapeStyle::from(COLOURS[i % COLOURS.len()]).stroke_width(LEGEND_STROKE_WIDTH),
                     )
                 });
+        }
+
+        for (i, (_, data)) in data_sequences.iter().enumerate() {
+            let window_size = 10;
+            let smoothed_loss = moving_average(data, window_size);
 
             chart.draw_series(LineSeries::new(
                 smoothed_loss.iter().map(|&(x, y)| (x as i32, y)),
