@@ -27,13 +27,18 @@ fn main() {
         ]))
         .output_buckets(outputs::MaterialCount::<8>)
         .feature_transformer(HIDDEN_SIZE)
+        .activate(Activation::CReLU)
+        .add_pairwise_mul()
+        .add_layer(16)
+        .activate(Activation::SCReLU)
+        .add_layer(32)
         .activate(Activation::SCReLU)
         .add_layer(1)
         .build();
 
     let sbs = 400;
     let schedule = TrainingSchedule {
-        net_id: "lovecraft".into(),
+        net_id: "hyperstition".into(),
         batch_size: 16_384,
         ft_regularisation: 1.0 / 16384.0 / 4194304.0,
         eval_scale: 400.0,
