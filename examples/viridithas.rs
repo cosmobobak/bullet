@@ -28,6 +28,7 @@ fn main() {
         .output_buckets(outputs::MaterialCount::<8>)
         .feature_transformer(HIDDEN_SIZE)
         .activate(Activation::SCReLU)
+        .add_layer(1)
         .build();
 
     let sbs = 400;
