@@ -16,10 +16,10 @@ fn main() {
         .quantisations(&[255, 64])
         .optimiser(optimiser::AdamW)
         .input(inputs::ChessBucketsMirroredFactorised::new([
-            0,  1,  2,  3,
-            4,  5,  6,  7,
-            8,  9, 10, 11,
-            8,  9, 10, 11,
+             0,  1,  2,  3,
+             4,  5,  6,  7,
+             8,  9, 10, 11,
+             8,  9, 10, 11,
             12, 12, 13, 13,
             12, 12, 13, 13,
             14, 14, 15, 15,
@@ -32,7 +32,7 @@ fn main() {
 
     let sbs = 400;
     let schedule = TrainingSchedule {
-        net_id: "crown".into(),
+        net_id: "lovecraft".into(),
         batch_size: 16_384,
         ft_regularisation: 0.0,
         eval_scale: 400.0,
