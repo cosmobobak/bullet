@@ -34,7 +34,7 @@ fn main() {
     let schedule = TrainingSchedule {
         net_id: "lovecraft".into(),
         batch_size: 16_384,
-        ft_regularisation: 0.0,
+        ft_regularisation: 1.0 / 16384.0 / 4194304.0,
         eval_scale: 400.0,
         batches_per_superbatch: 6104,
         start_superbatch: 1,
