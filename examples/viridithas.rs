@@ -36,7 +36,7 @@ fn main() {
         .add_layer(1)
         .build();
 
-    let sbs = 400;
+    let sbs = 600;
     let schedule = TrainingSchedule {
         net_id: "eigenmural".into(),
         batch_size: 16_384,
