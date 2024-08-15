@@ -13,7 +13,7 @@ const HIDDEN_SIZE: usize = 2048;
 
 fn main() {
     let mut trainer = TrainerBuilder::default()
-        .quantisations(&[255, 64])
+        .quantisations(&[255, 64, 64, 64])
         .optimiser(optimiser::AdamW)
         .input(inputs::ChessBucketsMirroredFactorised::new([
              0,  1,  2,  3,
