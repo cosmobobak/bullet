@@ -45,7 +45,8 @@ fn main() {
         batches_per_superbatch: 6104,
         start_superbatch: 1,
         end_superbatch: sbs,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.9 },
+        // wdl_scheduler: wdl::ConstantWDL { value: 0.9 },
+        wdl_scheduler: wdl::LinearWDL { start: 0.4, end: 0.9 },
         lr_scheduler: lr::Warmup {
             inner: lr::CosineDecayLR {
                 initial_lr: 0.001 * 0.3 * 0.3,
