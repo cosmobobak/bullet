@@ -67,7 +67,7 @@ fn main() {
 
     let settings = LocalSettings {
         threads: 4,
-        data_file_paths: vec!["data/fine-tuning-dataset.bin"],
+        data_file_paths: vec!["data/dataset.bin"],
         test_set: None,
         output_directory: "checkpoints",
     };
