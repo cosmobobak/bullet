@@ -36,9 +36,9 @@ fn main() {
         .add_layer(1)
         .build();
 
-    let sbs = 20;
+    let sbs = 100;
     let schedule = TrainingSchedule {
-        net_id: "hyperstition-post-train".into(),
+        net_id: "lila".into(),
         batch_size: 16_384,
         ft_regularisation: 1.0 / 16384.0 / 4194304.0,
         eval_scale: 400.0,
@@ -55,7 +55,7 @@ fn main() {
             warmup_batches: 200,
         },
         loss_function: Loss::SigmoidMSE,
-        save_rate: 1,
+        save_rate: 10,
         optimiser_settings: optimiser::AdamWParams {
             decay: 0.01,
             beta1: 0.9,
