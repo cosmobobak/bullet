@@ -36,9 +36,9 @@ fn main() {
         .add_layer(1)
         .build();
 
-    let sbs = 100;
+    let sbs = 50;
     let schedule = TrainingSchedule {
-        net_id: "hierophant".into(),
+        net_id: "priestess".into(),
         batch_size: 16_384,
         ft_regularisation: 1.0 / 16384.0 / 4194304.0,
         eval_scale: 400.0,
@@ -72,7 +72,7 @@ fn main() {
         output_directory: "checkpoints",
     };
 
-    // trainer.load_from_checkpoint("checkpoints/hyperstition-400")
-    trainer.load_weights_from_file("checkpoints/hyperstition-400/params.bin");
+    trainer.load_from_checkpoint("checkpoints/lila-100");
+    // trainer.load_weights_from_file("checkpoints/hyperstition-400/params.bin");
     trainer.run(&schedule, &settings);
 }
