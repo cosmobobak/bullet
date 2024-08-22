@@ -55,7 +55,7 @@ fn main() {
             warmup_batches: 200,
         },
         loss_function: Loss::SigmoidMSE,
-        save_rate: 10,
+        save_rate: 100,
         optimiser_settings: optimiser::AdamWParams {
             decay: 0.01,
             beta1: 0.9,
