@@ -38,14 +38,14 @@ fn main() {
 
     let sbs = 50;
     let schedule = TrainingSchedule {
-        net_id: "priestess".into(),
+        net_id: "lila-finetune-filtered".into(),
         batch_size: 16_384,
         ft_regularisation: 1.0 / 16384.0 / 4194304.0,
         eval_scale: 400.0,
         batches_per_superbatch: 6104,
         start_superbatch: 1,
         end_superbatch: sbs,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.6 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
         lr_scheduler: lr::Warmup {
             inner: lr::CosineDecayLR {
                 initial_lr: 0.0005,
