@@ -1,33 +1,51 @@
 use bullet_lib::{
-    inputs, lr, optimiser, outputs, wdl, Activation, LocalSettings, Loss, TrainerBuilder, TrainingSchedule, TrainingSteps,
+    inputs::{self, InputType},
+    loader, lr, operations,
+    optimiser::{AdamWOptimiser, AdamWParams},
+    outputs, wdl, Activation, ExecutionContext, Graph, GraphBuilder, LocalSettings, QuantTarget, Shape, Trainer,
+    TrainingSchedule, TrainingSteps,
 };
-
-const HIDDEN_SIZE: usize = 2048;
+use diffable::Node;
 
 fn main() {
-    let mut trainer = TrainerBuilder::default()
-        .quantisations(&[255, 64, 64, 64])
-        .optimiser(optimiser::AdamW)
-        .input(inputs::ChessBucketsMirroredFactorised::new([
-             0,  1,  2,  3,
-             4,  5,  6,  7,
-             8,  9, 10, 11,
-             8,  9, 10, 11,
-            12, 12, 13, 13,
-            12, 12, 13, 13,
-            14, 14, 15, 15,
-            14, 14, 15, 15,
-        ]))
-        .output_buckets(outputs::MaterialCount::<8>)
-        .feature_transformer(HIDDEN_SIZE)
-        .activate(Activation::CReLU)
-        .add_pairwise_mul()
-        .add_layer(16)
-        .activate(Activation::SCReLU)
-        .add_layer(32)
-        .activate(Activation::SCReLU)
-        .add_layer(1)
-        .build();
+    #[rustfmt::skip]
+    let inputs = inputs::ChessBucketsMirroredFactorised::new([
+         0,  1,  2,  3,
+         4,  5,  6,  7,
+         8,  9, 10, 11,
+         8,  9, 10, 11,
+        12, 12, 13, 13,
+        12, 12, 13, 13,
+        14, 14, 15, 15,
+        14, 14, 15, 15,
+    ]);
+    let hl = 2048;
+    let num_inputs = inputs.size();
+
+    let (mut graph, output_node) = build_network(num_inputs, hl);
+
+    graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (num_inputs as f32).sqrt(), true);
+    graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (num_inputs as f32).sqrt(), true);
+    graph.get_weights_mut("l1w").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
+    graph.get_weights_mut("l1b").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
+    graph.get_weights_mut("l2w").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
+    graph.get_weights_mut("l2b").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
+    graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
+    graph.get_weights_mut("l3b").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
+
+    let mut trainer = Trainer::<AdamWOptimiser, inputs::Chess768, outputs::Single>::new(
+        graph,
+        output_node,
+        AdamWParams::default(),
+        inputs::Chess768,
+        outputs::Single,
+        vec![
+            ("l0w".to_string(), QuantTarget::I16(255)),
+            ("l0b".to_string(), QuantTarget::I16(255)),
+            ("l1w".to_string(), QuantTarget::I16(64)),
+            ("l1b".to_string(), QuantTarget::I16(64 * 255)),
+        ],
+    );
 
     let sbs = 400;
     let schedule = TrainingSchedule {
@@ -38,35 +56,58 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: sbs,
         },
-        ft_regularisation: 1.0 / 16384.0 / 4194304.0,
         eval_scale: 400.0,
         wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
         lr_scheduler: lr::Warmup {
-            inner: lr::CosineDecayLR {
-                initial_lr: 0.001,
-                final_lr: 0.001 * 0.3 * 0.3 * 0.3,
-                final_superbatch: sbs,
-            },
+            inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: sbs },
             warmup_batches: 200,
         },
-        loss_function: Loss::SigmoidMSE,
         save_rate: 200,
-        optimiser_settings: optimiser::AdamWParams {
-            decay: 0.01,
-            beta1: 0.9,
-            beta2: 0.999,
-            min_weight: -1.98,
-            max_weight: 1.98,
-        },
     };
 
-    let settings = LocalSettings {
-        threads: 4,
-        test_set: None,
-        output_directory: "checkpoints",
-    };
+    let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
     let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
 
     trainer.run(&schedule, &settings, &data_loader);
+}
+
+fn build_network(inputs: usize, hl: usize) -> (Graph, Node) {
+    let mut builder = GraphBuilder::default();
+
+    // inputs
+    let stm = builder.create_input("stm", Shape::new(inputs, 1));
+    let nstm = builder.create_input("nstm", Shape::new(inputs, 1));
+    let targets = builder.create_input("targets", Shape::new(1, 1));
+
+    // trainable weights
+    let l0w = builder.create_weights("l0w", Shape::new(hl, inputs));
+    let l0b = builder.create_weights("l0b", Shape::new(hl, 1));
+
+    let l1w = builder.create_weights("l1w", Shape::new(16, hl));
+    let l1b = builder.create_weights("l1b", Shape::new(16, 1));
+
+    let l2w = builder.create_weights("l2w", Shape::new(32, 16));
+    let l2b = builder.create_weights("l2b", Shape::new(32, 1));
+
+    let l3w = builder.create_weights("l3w", Shape::new(1, 32));
+    let l3b = builder.create_weights("l3b", Shape::new(1, 1));
+
+    // inference
+    let l1 = operations::sparse_affine_dual_with_activation(&mut builder, l0w, stm, nstm, l0b, Activation::CReLU);
+    let paired = operations::pairwise_mul_post_sparse_affine_dual(&mut builder, l1);
+
+    let l2 = operations::affine(&mut builder, l1w, paired, l1b);
+    let l2 = operations::activate(&mut builder, l2, Activation::SCReLU);
+
+    let l3 = operations::affine(&mut builder, l2w, l2, l2b);
+    let l3 = operations::activate(&mut builder, l3, Activation::SCReLU);
+
+    let predicted = operations::affine(&mut builder, l3w, l3, l3b);
+    let sigmoided = operations::activate(&mut builder, predicted, Activation::Sigmoid);
+
+    operations::mse(&mut builder, sigmoided, targets);
+
+    // graph, output node
+    (builder.build(ExecutionContext::default()), predicted)
 }
