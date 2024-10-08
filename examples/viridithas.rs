@@ -33,12 +33,12 @@ fn main() {
     graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
     graph.get_weights_mut("l3b").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
 
-    let mut trainer = Trainer::<AdamWOptimiser, inputs::Chess768, outputs::Single>::new(
+    let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
         output_node,
         AdamWParams::default(),
-        inputs::Chess768,
-        outputs::Single,
+        inputs,
+        outputs::MaterialCount::<8>,
         vec![
             ("l0w".to_string(), QuantTarget::Float),
             ("l0b".to_string(), QuantTarget::Float),
