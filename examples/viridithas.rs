@@ -40,14 +40,18 @@ fn main() {
         inputs::Chess768,
         outputs::Single,
         vec![
-            ("l0w".to_string(), QuantTarget::I16(255)),
-            ("l0b".to_string(), QuantTarget::I16(255)),
-            ("l1w".to_string(), QuantTarget::I16(64)),
-            ("l1b".to_string(), QuantTarget::I16(64 * 255)),
+            ("l0w".to_string(), QuantTarget::Float),
+            ("l0b".to_string(), QuantTarget::Float),
+            ("l1w".to_string(), QuantTarget::Float),
+            ("l1b".to_string(), QuantTarget::Float),
+            ("l2w".to_string(), QuantTarget::Float),
+            ("l2b".to_string(), QuantTarget::Float),
+            ("l3w".to_string(), QuantTarget::Float),
+            ("l3b".to_string(), QuantTarget::Float),
         ],
     );
 
-    let sbs = 400;
+    let sbs = 800;
     let schedule = TrainingSchedule {
         net_id: "hyperstition".into(),
         steps: TrainingSteps {
