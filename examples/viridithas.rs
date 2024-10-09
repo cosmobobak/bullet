@@ -82,6 +82,7 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let stm = builder.create_input("stm", Shape::new(inputs, 1));
     let nstm = builder.create_input("nstm", Shape::new(inputs, 1));
     let targets = builder.create_input("targets", Shape::new(1, 1));
+    let buckets = builder.create_input("buckets", Shape::new(output_buckets, 1));
 
     // trainable weights
     let l0w = builder.create_weights("l0w", Shape::new(hl, inputs));
@@ -101,15 +102,15 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let paired = operations::pairwise_mul_post_sparse_affine_dual(&mut builder, l1);
 
     let l2 = operations::affine(&mut builder, l1w, paired, l1b);
-    let l2 = operations::select(&mut builder, l2, ???);
+    let l2 = operations::select(&mut builder, l2, buckets);
     let l2 = operations::activate(&mut builder, l2, Activation::SCReLU);
 
     let l3 = operations::affine(&mut builder, l2w, l2, l2b);
-    let l3 = operations::select(&mut builder, l3, ???);
+    let l3 = operations::select(&mut builder, l3, buckets);
     let l3 = operations::activate(&mut builder, l3, Activation::SCReLU);
 
     let predicted = operations::affine(&mut builder, l3w, l3, l3b);
-    let predicted = operations::select(&mut builder, predicted, ???);
+    let predicted = operations::select(&mut builder, predicted, buckets);
     let sigmoided = operations::activate(&mut builder, predicted, Activation::Sigmoid);
 
     operations::mse(&mut builder, sigmoided, targets);
