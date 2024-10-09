@@ -21,7 +21,7 @@ fn main() {
     ]);
     let hl = 2048;
 
-    let (mut graph, output_node) = build_network(inputs.size(), hl);
+    let (mut graph, output_node) = build_network(inputs.size(), hl, 8);
 
     graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (inputs.size() as f32).sqrt(), true);
     graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (inputs.size() as f32).sqrt(), true);
@@ -93,20 +93,23 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l2w = builder.create_weights("l2w", Shape::new(32 * output_buckets, 16));
     let l2b = builder.create_weights("l2b", Shape::new(32 * output_buckets, 1));
 
-    let l3w = builder.create_weights("l3w", Shape::new(1 * output_buckets, 32));
-    let l3b = builder.create_weights("l3b", Shape::new(1 * output_buckets, 1));
+    let l3w = builder.create_weights("l3w", Shape::new(output_buckets, 32));
+    let l3b = builder.create_weights("l3b", Shape::new(output_buckets, 1));
 
     // inference
     let l1 = operations::sparse_affine_dual_with_activation(&mut builder, l0w, stm, nstm, l0b, Activation::CReLU);
     let paired = operations::pairwise_mul_post_sparse_affine_dual(&mut builder, l1);
 
     let l2 = operations::affine(&mut builder, l1w, paired, l1b);
+    let l2 = operations::select(&mut builder, l2, ???);
     let l2 = operations::activate(&mut builder, l2, Activation::SCReLU);
 
     let l3 = operations::affine(&mut builder, l2w, l2, l2b);
+    let l3 = operations::select(&mut builder, l3, ???);
     let l3 = operations::activate(&mut builder, l3, Activation::SCReLU);
 
     let predicted = operations::affine(&mut builder, l3w, l3, l3b);
+    let predicted = operations::select(&mut builder, predicted, ???);
     let sigmoided = operations::activate(&mut builder, predicted, Activation::Sigmoid);
 
     operations::mse(&mut builder, sigmoided, targets);
