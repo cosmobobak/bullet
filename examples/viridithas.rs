@@ -20,12 +20,11 @@ fn main() {
         14, 14, 15, 15,
     ]);
     let hl = 2048;
-    let num_inputs = inputs.size();
 
-    let (mut graph, output_node) = build_network(num_inputs, hl);
+    let (mut graph, output_node) = build_network(inputs.size(), hl);
 
-    graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (num_inputs as f32).sqrt(), true);
-    graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (num_inputs as f32).sqrt(), true);
+    graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (inputs.size() as f32).sqrt(), true);
+    graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (inputs.size() as f32).sqrt(), true);
     graph.get_weights_mut("l1w").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l1b").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l2w").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
@@ -76,7 +75,7 @@ fn main() {
     trainer.run(&schedule, &settings, &data_loader);
 }
 
-fn build_network(inputs: usize, hl: usize) -> (Graph, Node) {
+fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Node) {
     let mut builder = GraphBuilder::default();
 
     // inputs
@@ -88,14 +87,14 @@ fn build_network(inputs: usize, hl: usize) -> (Graph, Node) {
     let l0w = builder.create_weights("l0w", Shape::new(hl, inputs));
     let l0b = builder.create_weights("l0b", Shape::new(hl, 1));
 
-    let l1w = builder.create_weights("l1w", Shape::new(16, hl));
-    let l1b = builder.create_weights("l1b", Shape::new(16, 1));
+    let l1w = builder.create_weights("l1w", Shape::new(16 * output_buckets, hl));
+    let l1b = builder.create_weights("l1b", Shape::new(16 * output_buckets, 1));
 
-    let l2w = builder.create_weights("l2w", Shape::new(32, 16));
-    let l2b = builder.create_weights("l2b", Shape::new(32, 1));
+    let l2w = builder.create_weights("l2w", Shape::new(32 * output_buckets, 16));
+    let l2b = builder.create_weights("l2b", Shape::new(32 * output_buckets, 1));
 
-    let l3w = builder.create_weights("l3w", Shape::new(1, 32));
-    let l3b = builder.create_weights("l3b", Shape::new(1, 1));
+    let l3w = builder.create_weights("l3w", Shape::new(1 * output_buckets, 32));
+    let l3b = builder.create_weights("l3b", Shape::new(1 * output_buckets, 1));
 
     // inference
     let l1 = operations::sparse_affine_dual_with_activation(&mut builder, l0w, stm, nstm, l0b, Activation::CReLU);
