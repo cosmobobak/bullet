@@ -23,8 +23,8 @@ fn main() {
 
     let (mut graph, output_node) = build_network(inputs.size(), hl, 8);
 
-    graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (inputs.size() as f32).sqrt(), true);
-    graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (inputs.size() as f32).sqrt(), true);
+    graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (768f32).sqrt(), true);
+    graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (768f32).sqrt(), true);
     graph.get_weights_mut("l1w").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l1b").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l2w").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
@@ -52,7 +52,7 @@ fn main() {
 
     let sbs = 800;
     let schedule = TrainingSchedule {
-        net_id: "hyperstition".into(),
+        net_id: "voyager".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
