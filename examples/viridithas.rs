@@ -21,6 +21,8 @@ fn main() {
     ]);
     let hl = 2048;
 
+    let fine_tuning = true;
+
     let (mut graph, output_node) = build_network(inputs.size(), hl, 8);
 
     graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (768f32).sqrt(), true);
@@ -54,17 +56,17 @@ fn main() {
 
     let initial_lr;
     let final_lr;
-
-    let fine_tuning = true;
+    let sbs;
     if fine_tuning {
         initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3;
+        sbs = 100;
     } else {
         initial_lr = 0.001;
         final_lr = 0.001 * 0.3 * 0.3 * 0.3;
+        sbs = 800;
     }
 
-    let sbs = 800;
     let schedule = TrainingSchedule {
         net_id: "helios".into(),
         steps: TrainingSteps {
