@@ -50,6 +50,8 @@ fn main() {
         ],
     );
 
+    trainer.load_from_checkpoint("checkpoints/voyager-800");
+
     let initial_lr;
     let final_lr;
 
