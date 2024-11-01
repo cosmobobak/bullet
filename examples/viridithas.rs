@@ -50,9 +50,21 @@ fn main() {
         ],
     );
 
+    let initial_lr;
+    let final_lr;
+
+    let fine_tuning = true;
+    if fine_tuning {
+        initial_lr = 0.0005;
+        final_lr = 0.0005 * 0.3 * 0.3 * 0.3;
+    } else {
+        initial_lr = 0.001;
+        final_lr = 0.001 * 0.3 * 0.3 * 0.3;
+    }
+
     let sbs = 800;
     let schedule = TrainingSchedule {
-        net_id: "voyager".into(),
+        net_id: "helios".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -62,7 +74,7 @@ fn main() {
         eval_scale: 400.0,
         wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
         lr_scheduler: lr::Warmup {
-            inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: sbs },
+            inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 200,
         },
         save_rate: 200,
