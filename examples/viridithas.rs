@@ -33,6 +33,7 @@ fn main() {
     graph.get_weights_mut("l2b").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
     graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
     graph.get_weights_mut("l3b").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
+    graph.get_weights_mut("psqt").seed_random(0.0, 1.0 / 768f32.sqrt(), true);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
@@ -113,6 +114,9 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l3w = builder.create_weights("l3w", Shape::new(output_buckets, 32));
     let l3b = builder.create_weights("l3b", Shape::new(output_buckets, 1));
 
+    let psqt = builder.create_weights("psqt", Shape::new(1, inputs));
+    let psqt_bias = builder.create_weights("psqt", Shape::new(1, 1));
+
     // inference
     let l1 = operations::sparse_affine_dual_with_activation(&mut builder, l0w, stm, nstm, l0b, Activation::CReLU);
     let paired = operations::pairwise_mul_post_sparse_affine_dual(&mut builder, l1);
@@ -125,8 +129,13 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l3 = operations::select(&mut builder, l3, buckets);
     let l3 = operations::activate(&mut builder, l3, Activation::SCReLU);
 
-    let predicted = operations::affine(&mut builder, l3w, l3, l3b);
-    let predicted = operations::select(&mut builder, predicted, buckets);
+    let main_net_out = operations::affine(&mut builder, l3w, l3, l3b);
+    let main_net_out = operations::select(&mut builder, main_net_out, buckets);
+
+    let psqt_out = operations::affine(&mut builder, psqt, stm, psqt_bias);
+
+    let predicted = operations::add(&mut builder, main_net_out, psqt_out);
+
     let sigmoided = operations::activate(&mut builder, predicted, Activation::Sigmoid);
 
     operations::mse(&mut builder, sigmoided, targets);
