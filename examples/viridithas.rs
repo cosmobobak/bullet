@@ -93,7 +93,7 @@ fn main() {
 }
 
 fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Node) {
-    let mut builder = GraphBuilder::default();
+    let builder = &mut GraphBuilder::default();
 
     // inputs
     let stm = builder.create_input("stm", Shape::new(inputs, 1));
@@ -118,27 +118,27 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let psqt_bias = builder.create_weights("psqt", Shape::new(1, 1));
 
     // inference
-    let l1 = operations::sparse_affine_dual_with_activation(&mut builder, l0w, stm, nstm, l0b, Activation::CReLU);
-    let paired = operations::pairwise_mul_post_sparse_affine_dual(&mut builder, l1);
+    let l1 = operations::sparse_affine_dual_with_activation(builder, l0w, stm, nstm, l0b, Activation::CReLU);
+    let paired = operations::pairwise_mul_post_sparse_affine_dual(builder, l1);
 
-    let l2 = operations::affine(&mut builder, l1w, paired, l1b);
-    let l2 = operations::select(&mut builder, l2, buckets);
-    let l2 = operations::activate(&mut builder, l2, Activation::SCReLU);
+    let l2 = operations::affine(builder, l1w, paired, l1b);
+    let l2 = operations::select(builder, l2, buckets);
+    let l2 = operations::activate(builder, l2, Activation::SCReLU);
 
-    let l3 = operations::affine(&mut builder, l2w, l2, l2b);
-    let l3 = operations::select(&mut builder, l3, buckets);
-    let l3 = operations::activate(&mut builder, l3, Activation::SCReLU);
+    let l3 = operations::affine(builder, l2w, l2, l2b);
+    let l3 = operations::select(builder, l3, buckets);
+    let l3 = operations::activate(builder, l3, Activation::SCReLU);
 
-    let main_net_out = operations::affine(&mut builder, l3w, l3, l3b);
-    let main_net_out = operations::select(&mut builder, main_net_out, buckets);
+    let main_net_out = operations::affine(builder, l3w, l3, l3b);
+    let main_net_out = operations::select(builder, main_net_out, buckets);
 
-    let psqt_out = operations::affine(&mut builder, psqt, stm, psqt_bias);
+    let psqt_out = operations::affine(builder, psqt, stm, psqt_bias);
 
-    let predicted = operations::add(&mut builder, main_net_out, psqt_out);
+    let predicted = operations::add(builder, main_net_out, psqt_out);
 
-    let sigmoided = operations::activate(&mut builder, predicted, Activation::Sigmoid);
+    let sigmoided = operations::activate(builder, predicted, Activation::Sigmoid);
 
-    operations::mse(&mut builder, sigmoided, targets);
+    operations::mse(builder, sigmoided, targets);
 
     // graph, output node
     (builder.build(ExecutionContext::default()), predicted)
