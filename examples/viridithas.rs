@@ -33,8 +33,8 @@ fn main() {
     graph.get_weights_mut("l2b").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
     graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
     graph.get_weights_mut("l3b").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
-    graph.get_weights_mut("psqt").seed_random(0.0, 1.0 / 768f32.sqrt(), true);
-    graph.get_weights_mut("psqt_bias").seed_random(0.0, 1.0 / 1f32.sqrt(), true);
+    graph.get_weights_mut("psqtw").seed_random(0.0, 1.0 / 768f32.sqrt(), true);
+    graph.get_weights_mut("psqtb").seed_random(0.0, 1.0 / 1f32.sqrt(), true);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
@@ -51,8 +51,8 @@ fn main() {
             ("l2b".to_string(), QuantTarget::Float),
             ("l3w".to_string(), QuantTarget::Float),
             ("l3b".to_string(), QuantTarget::Float),
-            ("psqt".to_string(), QuantTarget::Float),
-            ("psqt_bias".to_string(), QuantTarget::Float),
+            ("psqtw".to_string(), QuantTarget::Float),
+            ("psqtb".to_string(), QuantTarget::Float),
         ],
     );
 
@@ -117,8 +117,8 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l3w = builder.create_weights("l3w", Shape::new(output_buckets, 32));
     let l3b = builder.create_weights("l3b", Shape::new(output_buckets, 1));
 
-    let psqt = builder.create_weights("psqt", Shape::new(1, inputs));
-    let psqt_bias = builder.create_weights("psqt_bias", Shape::new(1, 1));
+    let psqt = builder.create_weights("psqtw", Shape::new(1, inputs));
+    let psqt_bias = builder.create_weights("psqtb", Shape::new(1, 1));
 
     // inference
     let l1 = operations::sparse_affine_dual_with_activation(builder, l0w, stm, nstm, l0b, Activation::CReLU);
