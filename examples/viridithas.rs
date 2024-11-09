@@ -146,7 +146,7 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
 
     let main_net_out = operations::add(builder, main_net_out, l1skip_out);
 
-    let psqt_out = operations::sparse_affine_dual_with_activation(builder, psqt, stm, nstm, output_bias, Activation::Identity);
+    let psqt_out = operations::affine(builder, psqt, stm, output_bias);
     let psqt_out = operations::select(builder, psqt_out, buckets);
 
     let predicted = operations::add(builder, main_net_out, psqt_out);
