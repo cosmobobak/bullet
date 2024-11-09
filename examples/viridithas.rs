@@ -141,10 +141,10 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l1skip_out = operations::affine(builder, l1skipw, paired, output_bias);
     let l1skip_out = operations::select(builder, l1skip_out, buckets);
 
-    let main_net_out = operations::affine(builder, l3w, l3, output_bias);
-    let main_net_out = operations::select(builder, main_net_out, buckets);
+    let l3_out = operations::affine(builder, l3w, l3, output_bias);
+    let l3_out = operations::select(builder, l3_out, buckets);
 
-    let main_net_out = operations::add(builder, main_net_out, l1skip_out);
+    let main_net_out = operations::add(builder, l3_out, l1skip_out);
 
     let psqt_out = operations::affine(builder, psqt, stm, output_bias);
     let psqt_out = operations::select(builder, psqt_out, buckets);
