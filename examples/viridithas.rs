@@ -30,7 +30,6 @@ fn main() {
     graph.get_weights_mut("l1w").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l1b").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l1skipw").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
-    graph.get_weights_mut("l1skipb").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
     graph.get_weights_mut("l2w").seed_random(0.0, 1.0 / 15f32.sqrt(), true);
     graph.get_weights_mut("l2b").seed_random(0.0, 1.0 / 15f32.sqrt(), true);
     graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
