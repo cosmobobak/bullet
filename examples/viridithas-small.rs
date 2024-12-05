@@ -1,11 +1,6 @@
 use bullet_lib::{
-    inputs::{self, InputType},
-    loader, lr, operations,
-    optimiser::{AdamWOptimiser, AdamWParams},
-    outputs, wdl, Activation, ExecutionContext, Graph, GraphBuilder, LocalSettings, QuantTarget, Shape, Trainer,
-    TrainingSchedule, TrainingSteps,
+    inputs::{self, InputType}, loader, lr, operations, optimiser::{AdamWOptimiser, AdamWParams}, outputs, wdl, Activation, ExecutionContext, Graph, GraphBuilder, LocalSettings, Node, QuantTarget, Shape, Trainer, TrainingSchedule, TrainingSteps
 };
-use diffable::Node;
 
 fn main() {
     #[rustfmt::skip]
@@ -48,6 +43,7 @@ fn main() {
             ("l3w".to_string(), QuantTarget::Float),
             ("l3b".to_string(), QuantTarget::Float),
         ],
+        false,
     );
 
     let sbs = 100;
