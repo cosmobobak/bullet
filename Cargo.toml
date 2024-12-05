@@ -2,7 +2,8 @@
 name = "bullet_lib"
 version = "1.0.0"
 edition = "2021"
-description = "Neural Network Trainer for 2-Player Games."
+rust-version = "1.83"
+description = "Neural Network Trainer"
 authors = ["Jamie Whiting"]
 license = "MIT"
 repository = "https://github.com/jw1912/bullet"
@@ -10,12 +11,12 @@ readme = "README.md"
 build = "build/main.rs"
 
 [features]
+cudnn = []
 hip = []
 gh-actions = []
 
 [dependencies]
 bulletformat = { workspace = true }
-diffable = { git = "https://github.com/jw1912/diffable.git", tag = "v0.7.0" }
 rand = "0.8.5"
 rand_distr = "0.4.3"
 
@@ -34,7 +35,6 @@ authors = ["Jamie Whiting"]
 bulletformat = "1.7.0"
 
 [profile.release]
-panic = 'abort'
-strip = true
+debug = true
 codegen-units = 1
 lto = true

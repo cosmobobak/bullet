@@ -6,9 +6,12 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::{cutechess, logger, lr::LrScheduler, wdl::WdlScheduler, TrainingSchedule};
+use crate::trainer::schedule::{lr::LrScheduler, wdl::WdlScheduler, TrainingSchedule};
 
-use super::cutechess::CuteChessArgs;
+use super::{
+    gamerunner::{self, GameRunnerArgs, GameRunnerPathInternal},
+    logger,
+};
 
 #[derive(Clone, Copy)]
 pub enum TimeControl {
@@ -25,9 +28,24 @@ pub enum OpeningBook<'a> {
 #[derive(Clone)]
 pub struct UciOption<'a>(pub &'a str, pub &'a str);
 
-impl<'a> Display for UciOption<'a> {
+impl Display for UciOption<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "option.{}={}", self.0, self.1)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum GameRunnerPath<'a> {
+    CuteChess(&'a str),
+    FastChess(&'a str),
+}
+
+impl GameRunnerPath<'_> {
+    fn as_internal(&self) -> GameRunnerPathInternal {
+        match self {
+            GameRunnerPath::CuteChess(x) => GameRunnerPathInternal::CuteChess(x.to_string()),
+            GameRunnerPath::FastChess(x) => GameRunnerPathInternal::FastChess(x.to_string()),
+        }
     }
 }
 
@@ -58,8 +76,8 @@ pub struct TestSettings<'a, T: EngineType> {
     pub test_rate: usize,
     /// Directory to use for testing (MUST NOT EXIST CURRENTLY).
     pub out_dir: &'a str,
-    /// Path to cutechess executable.
-    pub cutechess_path: &'a str,
+    /// Path to gamerunner executable.
+    pub gamerunner_path: GameRunnerPath<'a>,
     /// Path to opening book.
     pub book_path: OpeningBook<'a>,
     /// Number of game pairs to play.
@@ -74,11 +92,11 @@ pub struct TestSettings<'a, T: EngineType> {
     pub dev_engine: Engine<'a, T>,
 }
 
-impl<'a, T: EngineType> TestSettings<'a, T> {
+impl<T: EngineType> TestSettings<'_, T> {
     pub fn setup<LR: LrScheduler, WDL: WdlScheduler>(&self, schedule: &TrainingSchedule<LR, WDL>) {
-        let output = cutechess::CuteChessCommand::health_check(self.cutechess_path);
+        let output = gamerunner::GameRunnerCommand::health_check(&self.gamerunner_path.as_internal());
 
-        assert!(output.status.success(), "Could not start cutechess!");
+        assert!(output.status.success(), "Could not start gamerunner!");
 
         let bpath = match self.book_path {
             OpeningBook::Epd(path) => path,
@@ -154,8 +172,8 @@ impl<'a, T: EngineType> TestSettings<'a, T> {
             OpeningBook::Pgn(path) => (path.to_string(), true),
         };
 
-        let args = CuteChessArgs {
-            cutechess_path: self.cutechess_path.to_string(),
+        let args = GameRunnerArgs {
+            gamerunner_path: self.gamerunner_path.as_internal(),
             dev_engine_path,
             base_engine_path,
             dev_options: self.dev_engine.uci_options.iter().map(UciOption::to_string).collect(),
@@ -170,7 +188,7 @@ impl<'a, T: EngineType> TestSettings<'a, T> {
         let stats_path = format!("{out_dir}/stats.txt");
 
         thread::spawn(move || {
-            let (elo, err) = cutechess::run_games(args).unwrap();
+            let (elo, err) = gamerunner::run_games(args).unwrap();
             let mut file =
                 std::fs::OpenOptions::new().append(true).open(stats_path.as_str()).expect("Couldn't open stats path!");
 

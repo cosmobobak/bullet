@@ -2,9 +2,11 @@ mod activate;
 mod adamw;
 mod add;
 mod concat;
+mod conv;
 mod matmul;
 mod pairwise;
 mod power_error;
+mod slice;
 mod softmax;
 
 use super::shape::Shape;

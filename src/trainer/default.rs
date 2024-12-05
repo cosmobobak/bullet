@@ -1,14 +1,24 @@
 mod builder;
-pub mod cutechess;
+pub mod gamerunner;
+/// Contains the `InputType` trait for implementing custom input types,
+/// as well as several premade input formats that are commonly used.
+pub mod inputs;
 mod loader;
+/// Contains the `OutputBuckets` trait for implementing custom output bucket types,
+/// as well as several premade output buckets that are commonly used.
+pub mod outputs;
 mod quant;
 pub mod testing;
+
+use bulletformat::BulletFormat;
 
 pub use builder::{Loss, TrainerBuilder};
 pub use loader::DefaultDataPreparer;
 pub use quant::QuantTarget;
 
+use inputs::InputType;
 use loader::DefaultDataLoader;
+use outputs::OutputBuckets;
 use testing::{EngineType, TestSettings};
 
 use std::{
@@ -17,25 +27,30 @@ use std::{
     io::{self, Write},
 };
 
-use diffable::Node;
+use super::{
+    logger,
+    schedule::{lr::LrScheduler, wdl::WdlScheduler, TrainingSteps},
+    LocalSettings, TrainingSchedule,
+};
 
 use crate::{
-    inputs::InputType,
-    loader::{DataLoader, DirectSequentialDataLoader},
-    logger,
-    lr::LrScheduler,
+    autograd::Node,
+    loader::{CanBeDirectlySequentiallyLoaded, DataLoader, DirectSequentialDataLoader},
     optimiser::Optimiser,
-    outputs::{self, OutputBuckets},
     trainer::NetworkTrainer,
-    wdl::WdlScheduler,
-    Graph, LocalSettings, TrainingSchedule, TrainingSteps,
+    Graph,
 };
+
+/// Holy unsound code batman!
+/// Needs refactor.
+unsafe impl<T: BulletFormat + 'static> CanBeDirectlySequentiallyLoaded for T {}
 
 #[derive(Clone, Copy)]
 pub struct AdditionalTrainerInputs {
     nstm: bool,
     output_buckets: bool,
     wdl: bool,
+    dense_inputs: bool,
 }
 
 pub struct Trainer<Opt, Inp, Out = outputs::Single> {
@@ -59,12 +74,22 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
         let graph = self.optimiser.graph_mut();
 
         unsafe {
-            let input = &prepared.stm;
-            graph.get_input_mut("stm").load_sparse_from_slice(input.shape, input.max_active, &input.value);
+            if self.additional_inputs.dense_inputs {
+                let input = &prepared.dstm;
+                graph.get_input_mut("stm").load_dense_from_slice(input.shape, &input.value);
 
-            if self.additional_inputs.nstm {
-                let input = &prepared.nstm;
-                graph.get_input_mut("nstm").load_sparse_from_slice(input.shape, input.max_active, &input.value);
+                if self.additional_inputs.nstm {
+                    let input = &prepared.dnstm;
+                    graph.get_input_mut("nstm").load_dense_from_slice(input.shape, &input.value);
+                }
+            } else {
+                let input = &prepared.stm;
+                graph.get_input_mut("stm").load_sparse_from_slice(input.shape, input.max_active, &input.value);
+
+                if self.additional_inputs.nstm {
+                    let input = &prepared.nstm;
+                    graph.get_input_mut("nstm").load_sparse_from_slice(input.shape, input.max_active, &input.value);
+                }
             }
 
             if self.additional_inputs.output_buckets {
@@ -108,6 +133,7 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
         input_getter: Inp,
         output_getter: Out,
         saved_format: Vec<(String, QuantTarget)>,
+        dense_inputs: bool,
     ) -> Self {
         let inputs = graph.input_ids();
         let inputs = inputs.iter().map(String::as_str).collect::<HashSet<_>>();
@@ -135,7 +161,7 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
             input_getter,
             output_getter,
             output_node,
-            additional_inputs: AdditionalTrainerInputs { nstm, output_buckets, wdl },
+            additional_inputs: AdditionalTrainerInputs { nstm, output_buckets, wdl, dense_inputs },
             saved_format,
         }
     }
@@ -164,6 +190,7 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
             self.additional_inputs.wdl,
             schedule.eval_scale,
             data_loader.clone(),
+            self.additional_inputs.dense_inputs,
         );
         let test_preparer = settings.test_set.map(|test| {
             DefaultDataLoader::new(
@@ -172,6 +199,7 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
                 self.additional_inputs.wdl,
                 schedule.eval_scale,
                 DirectSequentialDataLoader::new(&[test.path]),
+                self.additional_inputs.dense_inputs,
             )
         });
 
@@ -220,7 +248,7 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
         }
     }
 
-    pub fn eval(&mut self, fen: &str) -> f32
+    pub fn eval_raw_output(&mut self, fen: &str) -> Vec<f32>
     where
         Inp::RequiredDataType: std::str::FromStr<Err = String>,
     {
@@ -234,6 +262,7 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
             1,
             1.0,
             1.0,
+            self.additional_inputs.dense_inputs,
         );
 
         self.load_batch(&prepared);
@@ -241,9 +270,29 @@ impl<Opt: Optimiser, Inp: InputType, Out: OutputBuckets<Inp::RequiredDataType>> 
 
         let eval = self.optimiser.graph().get_node(self.output_node);
 
-        let mut val = vec![0.0; eval.values.dense().allocated_size()];
-        eval.values.dense().write_to_slice(&mut val);
-        val[0]
+        let mut vals = vec![0.0; eval.values.dense().shape().size()];
+        eval.values.dense().write_to_slice(&mut vals);
+        vals
+    }
+
+    pub fn eval(&mut self, fen: &str) -> f32
+    where
+        Inp::RequiredDataType: std::str::FromStr<Err = String>,
+    {
+        let vals = self.eval_raw_output(fen);
+
+        match &vals[..] {
+            [mut loss, mut draw, mut win] => {
+                let max = win.max(draw).max(loss);
+                win = (win - max).exp();
+                draw = (draw - max).exp();
+                loss = (loss - max).exp();
+
+                (win + draw / 2.0) / (win + draw + loss)
+            }
+            [score] => *score,
+            _ => panic!("Invalid output size!"),
+        }
     }
 
     pub fn set_optimiser_params(&mut self, params: Opt::Params) {
