@@ -66,7 +66,7 @@ fn main() {
     if fine_tuning {
         initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3;
-        sbs = 100;
+        sbs = 200;
     } else {
         initial_lr = 0.001;
         final_lr = 0.001 * 0.3 * 0.3 * 0.3;
@@ -74,7 +74,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "nostromo".into(),
+        net_id: "prometheus".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
