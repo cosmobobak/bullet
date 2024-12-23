@@ -6,6 +6,8 @@ const HL: usize = 2560;
 const L2: usize = 16;
 const L3: usize = 64;
 
+const FINE_TUNING: bool = false;
+
 fn main() {
     #[rustfmt::skip]
     let inputs = inputs::ChessBucketsMirroredFactorised::new([
@@ -18,8 +20,6 @@ fn main() {
         14, 14, 15, 15,
         14, 14, 15, 15,
     ]);
-
-    let fine_tuning = false;
 
     let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
 
@@ -56,7 +56,7 @@ fn main() {
     let initial_lr;
     let final_lr;
     let sbs;
-    if fine_tuning {
+    if FINE_TUNING {
         initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3;
         sbs = 200;
@@ -67,7 +67,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "mockingbird".into(),
+        net_id: "cornucopia".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -103,13 +103,13 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l0w = builder.create_weights("l0w", Shape::new(hl, inputs));
     let l0b = builder.create_weights("l0b", Shape::new(hl, 1));
 
-    let l1w = builder.create_weights("l1w", Shape::new(16 * output_buckets, hl));
-    let l1b = builder.create_weights("l1b", Shape::new(16 * output_buckets, 1));
+    let l1w = builder.create_weights("l1w", Shape::new(L2 * output_buckets, hl));
+    let l1b = builder.create_weights("l1b", Shape::new(L2 * output_buckets, 1));
 
-    let l2w = builder.create_weights("l2w", Shape::new(32 * output_buckets, 16));
-    let l2b = builder.create_weights("l2b", Shape::new(32 * output_buckets, 1));
+    let l2w = builder.create_weights("l2w", Shape::new(L3 * output_buckets, L2));
+    let l2b = builder.create_weights("l2b", Shape::new(L3 * output_buckets, 1));
 
-    let l3w = builder.create_weights("l3w", Shape::new(output_buckets, 32));
+    let l3w = builder.create_weights("l3w", Shape::new(output_buckets, L3));
     let l3b = builder.create_weights("l3b", Shape::new(output_buckets, 1));
 
     // inference
