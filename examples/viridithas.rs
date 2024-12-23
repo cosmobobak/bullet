@@ -2,7 +2,7 @@ use bullet_lib::{
     inputs::{self, InputType}, loader, lr, operations, optimiser::{AdamWOptimiser, AdamWParams}, outputs, wdl, Activation, ExecutionContext, Graph, GraphBuilder, LocalSettings, Node, QuantTarget, Shape, Trainer, TrainingSchedule, TrainingSteps
 };
 
-const HL: usize = 2560;
+const HL: usize = 3072;
 const L2: usize = 16;
 const L3: usize = 64;
 
