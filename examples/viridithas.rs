@@ -19,7 +19,7 @@ fn main() {
         14, 14, 15, 15,
     ]);
 
-    let fine_tuning = true;
+    let fine_tuning = false;
 
     let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
 
