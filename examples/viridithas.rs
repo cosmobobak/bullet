@@ -2,6 +2,10 @@ use bullet_lib::{
     inputs::{self, InputType}, loader, lr, operations, optimiser::{AdamWOptimiser, AdamWParams}, outputs, wdl, Activation, ExecutionContext, Graph, GraphBuilder, LocalSettings, Node, QuantTarget, Shape, Trainer, TrainingSchedule, TrainingSteps
 };
 
+const HL: usize = 2560;
+const L2: usize = 16;
+const L3: usize = 64;
+
 fn main() {
     #[rustfmt::skip]
     let inputs = inputs::ChessBucketsMirroredFactorised::new([
@@ -14,20 +18,19 @@ fn main() {
         14, 14, 15, 15,
         14, 14, 15, 15,
     ]);
-    let hl = 2048;
 
     let fine_tuning = true;
 
-    let (mut graph, output_node) = build_network(inputs.size(), hl, 8);
+    let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
 
     graph.get_weights_mut("l0w").seed_random(0.0, 1.0 / (768f32).sqrt(), true);
     graph.get_weights_mut("l0b").seed_random(0.0, 1.0 / (768f32).sqrt(), true);
-    graph.get_weights_mut("l1w").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
-    graph.get_weights_mut("l1b").seed_random(0.0, 1.0 / (hl as f32).sqrt(), true);
-    graph.get_weights_mut("l2w").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
-    graph.get_weights_mut("l2b").seed_random(0.0, 1.0 / 16f32.sqrt(), true);
-    graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
-    graph.get_weights_mut("l3b").seed_random(0.0, 1.0 / 32f32.sqrt(), true);
+    graph.get_weights_mut("l1w").seed_random(0.0, 1.0 / (HL as f32).sqrt(), true);
+    graph.get_weights_mut("l1b").seed_random(0.0, 1.0 / (HL as f32).sqrt(), true);
+    graph.get_weights_mut("l2w").seed_random(0.0, 1.0 / (L2 as f32).sqrt(), true);
+    graph.get_weights_mut("l2b").seed_random(0.0, 1.0 / (L2 as f32).sqrt(), true);
+    graph.get_weights_mut("l3w").seed_random(0.0, 1.0 / (L3 as f32).sqrt(), true);
+    graph.get_weights_mut("l3b").seed_random(0.0, 1.0 / (L3 as f32).sqrt(), true);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
