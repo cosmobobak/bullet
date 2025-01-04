@@ -2,9 +2,9 @@ use bullet_lib::{
     inputs::{self, InputType}, loader, lr, operations, optimiser::{AdamWOptimiser, AdamWParams}, outputs, wdl, Activation, ExecutionContext, Graph, GraphBuilder, LocalSettings, Node, QuantTarget, Shape, Trainer, TrainingSchedule, TrainingSteps
 };
 
-const HL: usize = 3072;
+const HL: usize = 2048;
 const L2: usize = 16;
-const L3: usize = 64;
+const L3: usize = 32;
 
 const FINE_TUNING: bool = false;
 
@@ -112,6 +112,9 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let l3w = builder.create_weights("l3w", Shape::new(output_buckets, L3));
     let l3b = builder.create_weights("l3b", Shape::new(output_buckets, 1));
 
+    let error_w = builder.create_weights("error_w", Shape::new(output_buckets, L3));
+    let error_b = builder.create_weights("error_b", Shape::new(output_buckets, 1));
+
     // inference
     let l1 = operations::sparse_affine_dual_with_activation(builder, l0w, stm, nstm, l0b, Activation::CReLU);
     let paired = operations::pairwise_mul_post_sparse_affine_dual(builder, l1);
@@ -128,8 +131,19 @@ fn build_network(inputs: usize, hl: usize, output_buckets: usize) -> (Graph, Nod
     let predicted = operations::select(builder, predicted, buckets);
     let sigmoided = operations::activate(builder, predicted, Activation::Sigmoid);
 
-    operations::mse(builder, sigmoided, targets);
+    let error = operations::affine(builder, error_w, l3, error_b);
+    let error = operations::select(builder, error, buckets);
+    let error = operations::activate(builder, error, Activation::Sigmoid);
+
+    // train main head to predict value
+    let difference = operations::mse(builder, sigmoided, targets);
+
+    // train error head to predict (pred - target)^2
+    let sg_difference = operations::stop_gradient(builder, difference);
+    let error = operations::mse(builder, error, sg_difference);
+
+    let losses = operations::add(builder, error, difference);
 
     // graph, output node
-    (builder.build(ExecutionContext::default()), predicted)
+    (builder.build(ExecutionContext::default()), /* predicted */ losses)
 }
