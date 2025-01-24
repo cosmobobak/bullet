@@ -44,9 +44,9 @@ impl NetworkBuilder {
 
     pub fn new_affine(&self, id: &str, input_size: usize, output_size: usize) -> Affine {
         let wid = format!("{}w", id);
-        let init = InitSettings::Uniform { mean: 0.0, stdev: 1.0 / (input_size as f32).sqrt() };
+        let init = InitSettings::Normal { mean: 0.0, stdev: 1.0 / (input_size as f32).sqrt() };
         let weights = self.new_weights(&wid, Shape::new(output_size, input_size), init);
-        let bias = self.new_weights(&format!("{}b", id), Shape::new(output_size, 1), InitSettings::Zeroed);
+        let bias = self.new_weights(&format!("{}b", id), Shape::new(output_size, 1), init);
 
         Affine { weights: weights.node, bias: bias.node }
     }
