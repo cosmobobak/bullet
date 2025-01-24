@@ -85,7 +85,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "cornucopia".into(),
+        net_id: "blackheart".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
