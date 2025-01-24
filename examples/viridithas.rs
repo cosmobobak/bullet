@@ -126,7 +126,11 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
-    let pst = builder.new_weights("pst", Shape::new(output_buckets, num_inputs), InitSettings::Zeroed);
+    let pst = builder.new_weights(
+        "pst",
+        Shape::new(output_buckets, num_inputs),
+        InitSettings::Normal { mean: 0.1, stdev: 1.0 / 64.0 },
+    );
 
     // inference
     let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
