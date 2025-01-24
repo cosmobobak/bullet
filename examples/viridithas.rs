@@ -1,13 +1,17 @@
 use bullet_lib::{
-    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountNoisy}, nn::{
+    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountNoisy},
+    nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         Activation, ExecutionContext, Graph, InitSettings, NetworkBuilder, Node, Shape,
-    }, optimiser::Optimiser, trainer::{
+    },
+    optimiser::Optimiser,
+    trainer::{
         default::{inputs, loader, outputs, Trainer},
         save::{Layout, QuantTarget, SavedFormat},
         schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
         settings::LocalSettings,
-    }, NetworkTrainer
+    },
+    NetworkTrainer,
 };
 
 const HL: usize = 2048;
@@ -59,11 +63,7 @@ fn main() {
         false,
     );
 
-    let no_clipping = AdamWParams {
-        min_weight: -128.0,
-        max_weight: 128.0,
-        ..AdamWParams::default()
-    };
+    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
 
     trainer.optimiser_mut().set_params_for_weight("l2", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3", no_clipping);
@@ -125,7 +125,7 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
-    let pst = builder.new_weights("pst", Shape::new(1, num_inputs), InitSettings::Zeroed);
+    let pst = builder.new_weights("pst", Shape::new(output_buckets, num_inputs), InitSettings::Zeroed);
 
     // inference
     let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
@@ -134,7 +134,7 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
     let out = l3.forward(out).select(buckets);
 
-    let pst_out = pst.matmul(stm) - pst.matmul(nstm);
+    let pst_out = pst.matmul(stm).select(buckets) - pst.matmul(nstm).select(buckets);
     let out = out + pst_out;
 
     let pred = out.activate(Activation::Sigmoid);
