@@ -114,14 +114,14 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let pst = builder.new_weights("pst", Shape::new(1, num_inputs), InitSettings::Zeroed);
 
     // inference
-    let mut out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
-    out = out.pairwise_mul_post_affine_dual();
-    out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
-    out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
-    out = l3.forward(out).select(buckets);
+    let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
+    let out = out.pairwise_mul_post_affine_dual();
+    let out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
+    let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
+    let out = l3.forward(out).select(buckets);
 
     let pst_out = pst.matmul(stm) - pst.matmul(nstm);
-    out = out + pst_out;
+    let out = out + pst_out;
 
     let pred = out.activate(Activation::Sigmoid);
     pred.mse(targets);
