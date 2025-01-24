@@ -58,19 +58,19 @@ fn main() {
             SavedFormat::new("l2b", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3w", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3b", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("pst", QuantTarget::Float, Layout::Normal),
+            // SavedFormat::new("pst", QuantTarget::Float, Layout::Normal),
         ],
         false,
     );
 
-    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
-    let no_decay = AdamWParams { decay: 0.0, ..no_clipping };
+    // let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
+    // let no_decay = AdamWParams { decay: 0.0, ..no_clipping };
 
-    trainer.optimiser_mut().set_params_for_weight("l2w", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("l2b", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("pst", no_decay);
+    // trainer.optimiser_mut().set_params_for_weight("l2w", no_clipping);
+    // trainer.optimiser_mut().set_params_for_weight("l2b", no_clipping);
+    // trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
+    // trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
+    // trainer.optimiser_mut().set_params_for_weight("pst", no_decay);
 
     // trainer.load_from_checkpoint("checkpoints/<NAME>");
 
@@ -124,24 +124,15 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let buckets = builder.new_input("buckets", Shape::new(output_buckets, 1));
 
     // trainable weights
-    let l0 = {
-        let this = &builder;
-        let id: &str = "l0";
-        let wid = format!("{}w", id);
-        let init = InitSettings::Uniform { mean: 0.0, stdev: 1.0 / 704_f32.sqrt() };
-        let weights = this.new_weights(&wid, Shape::new(hl, num_inputs), init);
-        let bias = this.new_weights(&format!("{}b", id), Shape::new(hl, 1), InitSettings::Zeroed);
-
-        bullet_lib::nn::Affine { weights: weights.node, bias: bias.node }
-    };
+    let l0 = builder.new_affine("l0", num_inputs, hl);
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
-    let pst = builder.new_weights(
-        "pst",
-        Shape::new(output_buckets, num_inputs),
-        InitSettings::Normal { mean: 0.1, stdev: 1.0 / 64.0 },
-    );
+    // let pst = builder.new_weights(
+    //     "pst",
+    //     Shape::new(output_buckets, num_inputs),
+    //     InitSettings::Normal { mean: 0.1, stdev: 1.0 / 64.0 },
+    // );
 
     // inference
     let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
@@ -150,8 +141,8 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
     let out = l3.forward(out).select(buckets);
 
-    let pst_out = pst.matmul(stm).select(buckets) - pst.matmul(nstm).select(buckets);
-    let out = out + pst_out;
+    // let pst_out = pst.matmul(stm).select(buckets) - pst.matmul(nstm).select(buckets);
+    // let out = out + pst_out;
 
     let pred = out.activate(Activation::Sigmoid);
     pred.mse(targets);
