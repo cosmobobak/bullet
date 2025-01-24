@@ -74,7 +74,7 @@ impl NetworkBuilder {
 
 #[derive(Clone, Copy)]
 pub struct NetworkBuilderNode<'a> {
-    node: Node,
+    pub node: Node,
     builder: &'a NetworkBuilder,
 }
 
@@ -166,8 +166,8 @@ impl NetworkBuilderNode<'_> {
 
 #[derive(Clone, Copy)]
 pub struct Affine {
-    weights: Node,
-    bias: Node,
+    pub weights: Node,
+    pub bias: Node,
 }
 
 impl Affine {

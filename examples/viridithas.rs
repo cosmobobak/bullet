@@ -124,7 +124,16 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let buckets = builder.new_input("buckets", Shape::new(output_buckets, 1));
 
     // trainable weights
-    let l0 = builder.new_affine("l0", num_inputs, hl);
+    let l0 = {
+        let this = &builder;
+        let id: &str = "l0";
+        let wid = format!("{}w", id);
+        let init = InitSettings::Uniform { mean: 0.0, stdev: 1.0 / 704_f32.sqrt() };
+        let weights = this.new_weights(&wid, Shape::new(hl, num_inputs), init);
+        let bias = this.new_weights(&format!("{}b", id), Shape::new(hl, 1), InitSettings::Zeroed);
+
+        bullet_lib::nn::Affine { weights: weights.node, bias: bias.node }
+    };
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
