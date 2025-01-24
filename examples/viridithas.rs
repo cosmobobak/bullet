@@ -2,12 +2,12 @@ use bullet_lib::{
     default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountNoisy}, nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         Activation, ExecutionContext, Graph, InitSettings, NetworkBuilder, Node, Shape,
-    }, trainer::{
+    }, optimiser::Optimiser, trainer::{
         default::{inputs, loader, outputs, Trainer},
         save::{Layout, QuantTarget, SavedFormat},
         schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
         settings::LocalSettings,
-    }
+    }, NetworkTrainer
 };
 
 const HL: usize = 2048;
@@ -55,7 +55,17 @@ fn main() {
         false,
     );
 
-    // trainer.load_from_checkpoint("checkpoints/voyager-800");
+    let no_clipping = AdamWParams {
+        min_weight: -128.0,
+        max_weight: 128.0,
+        ..AdamWParams::default()
+    };
+
+    trainer.optimiser_mut().set_params_for_weight("l2", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l3", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("pst", no_clipping);
+
+    // trainer.load_from_checkpoint("checkpoints/<NAME>");
 
     let initial_lr;
     let final_lr;
