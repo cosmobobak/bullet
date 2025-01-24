@@ -64,10 +64,11 @@ fn main() {
     );
 
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
+    let no_decay = AdamWParams { decay: 0.0, ..no_clipping };
 
     trainer.optimiser_mut().set_params_for_weight("l2", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("pst", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("pst", no_decay);
 
     // trainer.load_from_checkpoint("checkpoints/<NAME>");
 
