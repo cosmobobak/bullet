@@ -78,7 +78,7 @@ fn main() {
     let final_lr;
     let sbs;
     if FINE_TUNING {
-        initial_lr = 0.0005 / 4.0;
+        initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3;
         sbs = 200;
     } else {
@@ -88,7 +88,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "goldsoul".into(),
+        net_id: "godsword".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -96,7 +96,7 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.75 },
         lr_scheduler: lr::Warmup {
             inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 800,
