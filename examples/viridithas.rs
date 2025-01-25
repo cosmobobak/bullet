@@ -18,7 +18,7 @@ const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = false;
+const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCountNoisy<8>;
@@ -72,13 +72,13 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("pst", no_decay);
 
-    // trainer.load_from_checkpoint("checkpoints/<NAME>");
+    trainer.load_from_checkpoint("checkpoints/blackheart-800");
 
     let initial_lr;
     let final_lr;
     let sbs;
     if FINE_TUNING {
-        initial_lr = 0.0005;
+        initial_lr = 0.0005 / 4.0;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3;
         sbs = 200;
     } else {
@@ -88,7 +88,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "blackheart".into(),
+        net_id: "goldsoul".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
