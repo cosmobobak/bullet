@@ -1,8 +1,8 @@
 use bullet_lib::{
-    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountNoisy},
+    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCount},
     nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
-        Activation, ExecutionContext, Graph, InitSettings, NetworkBuilder, Node, Shape,
+        Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     },
     optimiser::Optimiser,
     trainer::{
@@ -21,7 +21,7 @@ const L3: usize = 32;
 const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirroredFactorised;
-type Output = MaterialCountNoisy<8>;
+type Output = MaterialCount<8>;
 
 fn main() {
     #[rustfmt::skip]
@@ -58,21 +58,18 @@ fn main() {
             SavedFormat::new("l2b", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3w", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3b", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("pst", QuantTarget::Float, Layout::Normal),
         ],
         false,
     );
 
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
-    let no_decay = AdamWParams { decay: 0.0, ..no_clipping };
 
     trainer.optimiser_mut().set_params_for_weight("l2w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l2b", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("pst", no_decay);
 
-    trainer.load_from_checkpoint("checkpoints/blackheart-800");
+    trainer.load_from_checkpoint("checkpoints/temperance-200");
 
     let initial_lr;
     let final_lr;
@@ -88,7 +85,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "godsword".into(),
+        net_id: "perseverance".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -98,7 +95,7 @@ fn main() {
         eval_scale: 400.0,
         wdl_scheduler: wdl::ConstantWDL { value: 0.75 },
         lr_scheduler: lr::Warmup {
-            inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
+            inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 800,
         },
         save_rate: 200,
@@ -128,11 +125,6 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
-    let pst = builder.new_weights(
-        "pst",
-        Shape::new(output_buckets, num_inputs),
-        InitSettings::Normal { mean: 0.1, stdev: 1.0 / 64.0 },
-    );
 
     // inference
     let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
@@ -140,9 +132,6 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
     let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
     let out = l3.forward(out).select(buckets);
-
-    let pst_out = pst.matmul(stm).select(buckets) - pst.matmul(nstm).select(buckets);
-    let out = out + pst_out;
 
     let pred = out.activate(Activation::Sigmoid);
     pred.mse(targets);
