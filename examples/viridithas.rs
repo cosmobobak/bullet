@@ -1,10 +1,10 @@
 use bullet_lib::{
     default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCount},
     nn::{
+        optimiser::Optimiser,
         optimiser::{AdamWOptimiser, AdamWParams},
         Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     },
-    optimiser::Optimiser,
     trainer::{
         default::{inputs, loader, outputs, Trainer},
         save::{Layout, QuantTarget, SavedFormat},
