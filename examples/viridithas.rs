@@ -18,7 +18,7 @@ const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = true;
+const FINE_TUNING: bool = false;
 
 type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCount<8>;
@@ -85,7 +85,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "perseverance".into(),
+        net_id: "kolibri".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -95,7 +95,7 @@ fn main() {
         eval_scale: 400.0,
         wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
         lr_scheduler: lr::Warmup {
-            inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: sbs },
+            inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 800,
         },
         save_rate: 200,
