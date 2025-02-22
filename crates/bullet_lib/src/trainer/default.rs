@@ -41,10 +41,11 @@ use super::{
 use crate::save;
 
 use bullet_core::{
+    device::OperationError,
     graph::{builder::Node, Graph},
-    optimiser::Optimiser,
+    optimiser::{Optimiser, OptimiserState},
 };
-use bullet_hip_backend::{ExecutionContext, SparseMatrix};
+use bullet_hip_backend::{DeviceError, ExecutionContext, SparseMatrix};
 
 unsafe impl CanBeDirectlySequentiallyLoaded for bulletformat::ChessBoard {}
 unsafe impl CanBeDirectlySequentiallyLoaded for bulletformat::AtaxxBoard {}
@@ -59,8 +60,8 @@ pub struct AdditionalTrainerInputs {
     dense_inputs: bool,
 }
 
-pub struct Trainer<Opt, Inp, Out = outputs::Single> {
-    optimiser: Opt,
+pub struct Trainer<Opt: OptimiserState<ExecutionContext>, Inp, Out = outputs::Single> {
+    optimiser: Optimiser<ExecutionContext, Opt>,
     input_getter: Inp,
     output_getter: Out,
     output_node: Node,
@@ -70,58 +71,21 @@ pub struct Trainer<Opt, Inp, Out = outputs::Single> {
     sparse_scratch_space: SparseMatrix,
 }
 
-impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>> NetworkTrainer
-    for Trainer<Opt, Inp, Out>
+impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>>
+    NetworkTrainer for Trainer<Opt, Inp, Out>
 {
-    type Optimiser = Opt;
+    type OptimiserState = Opt;
     type PreparedData = DefaultDataPreparer<Inp, Out>;
 
     fn load_batch(&mut self, prepared: &Self::PreparedData) -> usize {
-        let batch_size = prepared.batch_size;
-
-        let graph = self.optimiser.graph_mut();
-
-        unsafe {
-            if self.additional_inputs.dense_inputs {
-                let input = &prepared.stm;
-                self.sparse_scratch_space.load_from_slice(input.max_active, Some(batch_size), &input.value);
-                self.sparse_scratch_space.copy_into_dense(graph.get_input_mut("stm").values.dense_mut());
-
-                if self.additional_inputs.nstm {
-                    let input = &prepared.nstm;
-                    self.sparse_scratch_space.load_from_slice(input.max_active, Some(batch_size), &input.value);
-                    self.sparse_scratch_space.copy_into_dense(graph.get_input_mut("nstm").values.dense_mut());
-                }
-            } else {
-                let input = &prepared.stm;
-                graph.get_input_mut("stm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value);
-
-                if self.additional_inputs.nstm {
-                    let input = &prepared.nstm;
-                    graph.get_input_mut("nstm").load_sparse_from_slice(
-                        input.max_active,
-                        Some(batch_size),
-                        &input.value,
-                    );
-                }
-            }
-
-            if self.additional_inputs.output_buckets {
-                let input = &prepared.buckets;
-                graph.get_input_mut("buckets").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value);
-            }
-        }
-
-        graph.get_input_mut("targets").load_dense_from_slice(Some(batch_size), &prepared.targets.value);
-
-        batch_size
+        unsafe { self.load(prepared).unwrap() }
     }
 
-    fn optimiser(&self) -> &Self::Optimiser {
+    fn optimiser(&self) -> &Optimiser<ExecutionContext, Self::OptimiserState> {
         &self.optimiser
     }
 
-    fn optimiser_mut(&mut self) -> &mut Self::Optimiser {
+    fn optimiser_mut(&mut self) -> &mut Optimiser<ExecutionContext, Self::OptimiserState> {
         &mut self.optimiser
     }
 
@@ -130,16 +94,21 @@ impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<
 
         let optimiser_path = format!("{path}/optimiser_state");
         std::fs::create_dir(optimiser_path.as_str()).unwrap_or(());
-        self.optimiser().write_to_checkpoint(&optimiser_path);
+        self.optimiser().write_to_checkpoint(&optimiser_path).unwrap();
 
-        self.save_unquantised(&format!("{path}/raw.bin")).unwrap();
+        if let Err(e) = self.save_unquantised(&format!("{path}/raw.bin")) {
+            println!("Failed to write raw network weights:");
+            println!("{e}");
+        }
+
         if let Err(e) = self.save_quantised(&format!("{path}/quantised.bin")) {
+            println!("Failed to write quantised network weights:");
             println!("{e}");
         }
     }
 }
 
-impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>>
+impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>>
     Trainer<Opt, Inp, Out>
 {
     pub fn new(
@@ -172,10 +141,10 @@ impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<
             println!("WARNING: The network graph contains an unexpected number of inputs!")
         };
 
-        let sparse_scratch_space = SparseMatrix::zeroed(graph.device(), 1, 1);
+        let sparse_scratch_space = SparseMatrix::zeroed(graph.device(), 1, 1).unwrap();
 
         Self {
-            optimiser: Opt::new(graph, params),
+            optimiser: Optimiser::new(graph, params).unwrap(),
             input_getter,
             output_getter,
             output_node,
@@ -211,12 +180,12 @@ impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<
         );
 
         self.load_batch(&prepared);
-        self.optimiser.graph_mut().forward();
+        self.optimiser.graph.forward().unwrap();
 
-        let eval = self.optimiser.graph().get_node(self.output_node);
+        let eval = self.optimiser.graph.get_node(self.output_node);
 
         let mut vals = vec![0.0; eval.values.dense().size()];
-        eval.values.dense().write_to_slice(&mut vals);
+        eval.values.dense().write_to_slice(&mut vals).unwrap();
         vals
     }
 
@@ -260,11 +229,11 @@ impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<
         let mut buf = Vec::new();
 
         for SavedFormat { id, quant, layout } in &self.saved_format {
-            let weights = self.optimiser.graph().get_weights(id);
+            let weights = self.optimiser.graph.get_weights(id);
             let weights = weights.values.dense();
 
             let mut weight_buf = vec![0.0; weights.size()];
-            let written = weights.write_to_slice(&mut weight_buf);
+            let written = weights.write_to_slice(&mut weight_buf).unwrap();
             assert_eq!(written, weights.size());
 
             if let Some(factorised) = &self.factorised_weights {
@@ -309,11 +278,11 @@ impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<
         let mut buf = Vec::new();
 
         for SavedFormat { id, .. } in &self.saved_format {
-            let weights = self.optimiser.graph().get_weights(id);
+            let weights = self.optimiser.graph.get_weights(id);
             let weights = weights.values.dense();
 
             let mut weight_buf = vec![0.0; weights.size()];
-            let written = weights.write_to_slice(&mut weight_buf);
+            let written = weights.write_to_slice(&mut weight_buf).unwrap();
             assert_eq!(written, weights.size());
 
             let quantised = QuantTarget::Float.quantise(&weight_buf)?;
@@ -364,6 +333,40 @@ impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<
 
         (preparer, test_preparer)
     }
+
+    unsafe fn load(&mut self, prepared: &DefaultDataPreparer<Inp, Out>) -> Result<usize, OperationError<DeviceError>> {
+        let batch_size = prepared.batch_size;
+        let graph = &mut self.optimiser.graph;
+
+        if self.additional_inputs.dense_inputs {
+            let input = &prepared.stm;
+            self.sparse_scratch_space.load_from_slice(input.max_active, Some(batch_size), &input.value)?;
+            self.sparse_scratch_space.copy_into_dense(graph.get_input_mut("stm").values.dense_mut())?;
+
+            if self.additional_inputs.nstm {
+                let input = &prepared.nstm;
+                self.sparse_scratch_space.load_from_slice(input.max_active, Some(batch_size), &input.value)?;
+                self.sparse_scratch_space.copy_into_dense(graph.get_input_mut("nstm").values.dense_mut())?;
+            }
+        } else {
+            let input = &prepared.stm;
+            graph.get_input_mut("stm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value)?;
+
+            if self.additional_inputs.nstm {
+                let input = &prepared.nstm;
+                graph.get_input_mut("nstm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value)?;
+            }
+        }
+
+        if self.additional_inputs.output_buckets {
+            let input = &prepared.buckets;
+            graph.get_input_mut("buckets").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value)?;
+        }
+
+        graph.get_input_mut("targets").load_dense_from_slice(Some(batch_size), &prepared.targets.value)?;
+
+        Ok(batch_size)
+    }
 }
 
 fn display_total_positions<T, D: DataLoader<T>>(data_loader: &D, steps: TrainingSteps) {
@@ -378,7 +381,7 @@ fn display_total_positions<T, D: DataLoader<T>>(data_loader: &D, steps: Training
     }
 }
 
-impl<Opt: Optimiser<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>>
+impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>>
     Trainer<Opt, Inp, Out>
 where
     Inp::RequiredDataType: CanBeDirectlySequentiallyLoaded,
@@ -432,7 +435,10 @@ type PairedLoaders<Inp, Out, D, D2> = (DefaultDataLoader<Inp, Out, D>, Option<De
 ///
 /// The graph needs to take sparse `stm` and optionally `nstm` inputs
 /// in the correct format
-pub unsafe fn load_into_graph<Inp, Out>(graph: &mut Graph<ExecutionContext>, prepared: &DefaultDataPreparer<Inp, Out>)
+pub unsafe fn load_into_graph<Inp, Out>(
+    graph: &mut Graph<ExecutionContext>,
+    prepared: &DefaultDataPreparer<Inp, Out>,
+) -> Result<(), OperationError<DeviceError>>
 where
     Inp: SparseInputType,
     Out: OutputBuckets<Inp::RequiredDataType>,
@@ -441,18 +447,20 @@ where
 
     unsafe {
         let input = &prepared.stm;
-        graph.get_input_mut("stm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value);
+        graph.get_input_mut("stm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value)?;
 
         if graph.input_ids().contains(&"nstm".to_string()) {
             let input = &prepared.nstm;
-            graph.get_input_mut("nstm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value);
+            graph.get_input_mut("nstm").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value)?;
         }
     }
 
     if graph.input_ids().contains(&"buckets".to_string()) {
         let input = &prepared.buckets;
-        graph.get_input_mut("buckets").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value);
+        graph.get_input_mut("buckets").load_sparse_from_slice(input.max_active, Some(batch_size), &input.value)?;
     }
 
-    graph.get_input_mut("targets").load_dense_from_slice(Some(batch_size), &prepared.targets.value);
+    graph.get_input_mut("targets").load_dense_from_slice(Some(batch_size), &prepared.targets.value)?;
+
+    Ok(())
 }

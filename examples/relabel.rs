@@ -2,10 +2,7 @@
 Code to relabel a bulletformat dataset with a network
 */
 
-use std::{fs::File, io::BufWriter, time::Instant};
-
 use bullet_core::optimiser::utils::load_graph_weights_from_file;
-
 use bullet_lib::{
     nn::{Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape},
     trainer::default::{
@@ -17,14 +14,23 @@ use bullet_lib::{
     },
 };
 use bulletformat::BulletFormat;
+use std::{fs::File, io::BufWriter, time::Instant};
 
 const NETWORK_PATH: &str = "checkpoints/monty-datagen25-240/optimiser_state/weights.bin";
 const DATA_PATH: &str = "data/baseline.data";
 const OUTPUT_PATH: &str = "data/relabled.data";
 
 fn main() {
+    #[rustfmt::skip]
     let inputs = inputs::ChessBucketsMirrored::new([
-        0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        0, 0, 1, 1,
+        2, 2, 2, 2,
+        3, 3, 3, 3,
+        3, 3, 3, 3,
+        3, 3, 3, 3,
+        3, 3, 3, 3,
+        3, 3, 3, 3,
+        3, 3, 3, 3,
     ]);
     let output_buckets = outputs::Single;
     let hl_size = 1024;
@@ -48,7 +54,7 @@ fn main() {
 
     std::thread::spawn(move || {
         let (mut graph, output_node) = build_network(inputs.num_inputs(), hl_size);
-        load_graph_weights_from_file::<ExecutionContext>(&mut graph, NETWORK_PATH, true);
+        load_graph_weights_from_file::<ExecutionContext>(&mut graph, NETWORK_PATH, true).unwrap();
 
         let mut error = 0.0;
         let mut batches = 0;
@@ -57,10 +63,10 @@ fn main() {
 
         while let Ok((mut batch, prepared)) = receiver.recv() {
             unsafe {
-                load_into_graph(&mut graph, &prepared);
+                load_into_graph(&mut graph, &prepared).unwrap();
             }
 
-            error += f64::from(graph.forward());
+            error += f64::from(graph.forward().unwrap());
             batches += 1;
             positions += batch.len();
 
