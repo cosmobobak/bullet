@@ -1,5 +1,5 @@
 use bullet_lib::{
-    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountFarseer},
+    default::{inputs::ChessBucketsMirrored, outputs::Single},
     nn::{
         optimiser::{AdamWOptimiser, AdamWParams, Optimiser},
         Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape,
@@ -13,32 +13,32 @@ use bullet_lib::{
     NetworkTrainer,
 };
 
-const HL: usize = 2048;
-const L2: usize = 16;
-const L3: usize = 32;
-const L4: usize = 32;
+const HL: usize = 8192;
+const L2: usize = 32;
+const L3: usize = 64;
+const L4: usize = 64;
 
 const FINE_TUNING: bool = false;
 
-type Input = ChessBucketsMirroredFactorised;
-type Output = MaterialCountFarseer;
+type Input = ChessBucketsMirrored;
+type Output = Single;
 
 fn main() {
     #[rustfmt::skip]
     let inputs = Input::new([
-         0,  1,  2,  3,
-         4,  5,  6,  7,
-         8,  9, 10, 11,
-         8,  9, 10, 11,
-        12, 12, 13, 13,
-        12, 12, 13, 13,
-        14, 14, 15, 15,
-        14, 14, 15, 15,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
     ]);
     let output_buckets = Output::default();
 
     let num_inputs = <Input as inputs::SparseInputType>::num_inputs(&inputs);
-    let num_buckets = <Output as outputs::OutputBuckets<_>>::BUCKETS;
+    let num_buckets = <Output as outputs::OutputBuckets<Single>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
     let (graph, output_node) = build_network(num_inputs, num_buckets, HL);
@@ -87,7 +87,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "kolibri".into(),
+        net_id: "sensei".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
