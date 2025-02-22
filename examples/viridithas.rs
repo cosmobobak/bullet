@@ -1,8 +1,7 @@
 use bullet_lib::{
-    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCount},
+    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountFarseer},
     nn::{
-        optimiser::Optimiser,
-        optimiser::{AdamWOptimiser, AdamWParams},
+        optimiser::{AdamWOptimiser, AdamWParams, Optimiser},
         Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     },
     trainer::{
@@ -17,11 +16,12 @@ use bullet_lib::{
 const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
+const L4: usize = 32;
 
 const FINE_TUNING: bool = false;
 
 type Input = ChessBucketsMirroredFactorised;
-type Output = MaterialCount<8>;
+type Output = MaterialCountFarseer;
 
 fn main() {
     #[rustfmt::skip]
@@ -58,6 +58,8 @@ fn main() {
             SavedFormat::new("l2b", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3w", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3b", QuantTarget::Float, Layout::Normal),
+            SavedFormat::new("l4w", QuantTarget::Float, Layout::Normal),
+            SavedFormat::new("l4b", QuantTarget::Float, Layout::Normal),
         ],
         false,
     );
@@ -69,7 +71,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
-    trainer.load_from_checkpoint("checkpoints/temperance-200");
+    // trainer.load_from_checkpoint("checkpoints/temperance-200");
 
     let initial_lr;
     let final_lr;
@@ -124,14 +126,17 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let l0 = builder.new_affine("l0", num_inputs, hl);
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
-    let l3 = builder.new_affine("l3", L3, output_buckets);
+    let l3 = builder.new_affine("l3", L3, output_buckets * L4);
+    let l4 = builder.new_affine("l4", L4 + L3, output_buckets);
 
     // inference
     let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
     let out = out.pairwise_mul_post_affine_dual();
     let out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
-    let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
-    let out = l3.forward(out).select(buckets);
+    let l2out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
+    let l3out = l3.forward(out).select(buckets).activate(Activation::SCReLU);
+    let out = l3out.concat(l2out);
+    let out = l4.forward(out).select(buckets);
 
     let pred = out.activate(Activation::Sigmoid);
     pred.mse(targets);
