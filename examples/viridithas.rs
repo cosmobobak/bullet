@@ -1,7 +1,7 @@
 use bullet_lib::{
     default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountFarseer},
     nn::{
-        optimiser::{AdamWOptimiser, AdamWParams, Optimiser},
+        optimiser::{AdamWOptimiser, AdamWParams},
         Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     },
     trainer::{
