@@ -14,7 +14,7 @@ use bullet_lib::{
 };
 
 const HL: usize = 8192;
-const L2: usize = 32;
+const L2: usize = 16;
 const L3: usize = 64;
 const L4: usize = 64;
 
