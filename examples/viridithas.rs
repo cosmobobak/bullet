@@ -134,7 +134,7 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let out = out.pairwise_mul_post_affine_dual();
     let out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
     let l2out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
-    let l3out = l3.forward(out).select(buckets).activate(Activation::SCReLU);
+    let l3out = l3.forward(l2out).select(buckets).activate(Activation::SCReLU);
     let out = l3out.concat(l2out);
     let out = l4.forward(out).select(buckets);
 
