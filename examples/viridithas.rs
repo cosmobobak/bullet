@@ -57,8 +57,6 @@ fn main() {
             SavedFormat::new("l2b", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3w", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3b", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l4w", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l4b", QuantTarget::Float, Layout::Normal),
         ],
         false,
     );
