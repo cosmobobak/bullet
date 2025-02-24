@@ -12,6 +12,7 @@ use bullet_lib::{
     },
     NetworkTrainer,
 };
+use bulletformat::ChessBoard;
 
 const HL: usize = 8192;
 const L2: usize = 16;
@@ -37,7 +38,7 @@ fn main() {
     let output_buckets = Output::default();
 
     let num_inputs = <Input as inputs::SparseInputType>::num_inputs(&inputs);
-    let num_buckets = <Output as outputs::OutputBuckets<Single>>::BUCKETS;
+    let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
     let (graph, output_node) = build_network(num_inputs, num_buckets, HL);
