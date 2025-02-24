@@ -87,8 +87,8 @@ fn main() {
     let schedule = TrainingSchedule {
         net_id: "sensei".into(),
         steps: TrainingSteps {
-            batch_size: 16_384 / 2,
-            batches_per_superbatch: 6104 * 2,
+            batch_size: 16_384,
+            batches_per_superbatch: 6104,
             start_superbatch: 1,
             end_superbatch: sbs,
         },
