@@ -64,7 +64,7 @@ fn main() {
 
     std::thread::spawn(move || {
         let (mut graph, output_node) = build_network(num_inputs, num_buckets, HL);
-        load_graph_weights_from_file::<ExecutionContext>(&mut graph, NETWORK_PATH, true).unwrap();
+        load_graph_weights_from_file::<ExecutionContext>(&mut graph, NETWORK_PATH, false).unwrap();
 
         let mut error = 0.0;
         let mut batches = 0;
