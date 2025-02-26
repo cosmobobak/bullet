@@ -16,7 +16,6 @@ use bullet_lib::{
 const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
-const L4: usize = 32;
 
 const FINE_TUNING: bool = false;
 
@@ -58,8 +57,6 @@ fn main() {
             SavedFormat::new("l2b", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3w", QuantTarget::Float, Layout::Normal),
             SavedFormat::new("l3b", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l4w", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l4b", QuantTarget::Float, Layout::Normal),
         ],
         false,
     );
@@ -87,7 +84,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "requiem".into(),
+        net_id: "alembic".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -95,7 +92,7 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.0 },
         lr_scheduler: lr::Warmup {
             inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 800,
@@ -105,7 +102,7 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    let data_loader = loader::DirectSequentialDataLoader::new(&["data/relabeled.bin"]);
 
     trainer.run(&schedule, &settings, &data_loader);
 
@@ -126,17 +123,14 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let l0 = builder.new_affine("l0", num_inputs, hl);
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
-    let l3 = builder.new_affine("l3", L3, output_buckets * L4);
-    let l4 = builder.new_affine("l4", L4 + L3, output_buckets);
+    let l3 = builder.new_affine("l3", L3, output_buckets);
 
     // inference
     let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
     let out = out.pairwise_mul_post_affine_dual();
     let out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
-    let l2out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
-    let l3out = l3.forward(l2out).select(buckets).activate(Activation::SCReLU);
-    let out = l3out.concat(l2out);
-    let out = l4.forward(out).select(buckets);
+    let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
+    let out = l3.forward(out).select(buckets);
 
     let pred = out.activate(Activation::Sigmoid);
     pred.mse(targets);
