@@ -8,9 +8,11 @@ pub mod utils;
 use std::{collections::HashMap, fmt::Debug, marker::PhantomData, sync::Arc};
 
 use crate::{
-    device::{Device, OperationError},
+    backend::{
+        device::{Device, OperationError},
+        tensor::DenseMatrix,
+    },
     graph::Graph,
-    tensor::DenseMatrix,
 };
 
 pub trait OptimiserState<D: Device>: Sized {
@@ -66,11 +68,11 @@ impl<D: Device, S: OptimiserState<D>> Optimiser<D, S> {
 
     pub fn update(&mut self, gradient_factor: f32, learning_rate: f32) -> Result<(), OperationError<D::DeviceError>> {
         for id in &self.graph.weight_ids() {
-            let weights = self.graph.get_weights_mut(id);
+            let weights = &mut *self.graph.get_weights_mut(id);
             let single = self.state.get_mut(id).unwrap();
 
             if let Some(grads) = weights.gradients.as_mut() {
-                single.update(weights.values.dense_mut(), grads, gradient_factor, learning_rate)?;
+                single.update(weights.values.dense_mut()?, grads, gradient_factor, learning_rate)?;
             }
         }
 

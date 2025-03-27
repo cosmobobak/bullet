@@ -1,31 +1,55 @@
 use std::io::{self, Write};
 
-use bullet_core::shape::Shape;
-use bullet_hip_backend::DenseMatrix;
+use crate::{nn::Graph, ExecutionContext};
+use bullet_core::backend::{device::blas::Shape, tensor::DenseMatrix};
+
+type F = fn(&Graph, Vec<f32>) -> Vec<f32>;
 
 #[derive(Clone)]
 pub struct SavedFormat {
-    pub(super) id: String,
-    pub(super) quant: QuantTarget,
-    pub(super) layout: Layout,
+    pub(crate) id: String,
+    pub(crate) quant: QuantTarget,
+    pub(crate) layout: Layout,
+    pub(crate) transforms: Vec<F>,
 }
 
 impl SavedFormat {
     pub fn new(id: &str, quant: QuantTarget, layout: Layout) -> Self {
-        SavedFormat { id: id.to_string(), quant, layout }
+        SavedFormat { id: id.to_string(), quant, layout, transforms: Vec::new() }
     }
 
-    pub fn write_to_byte_buffer(&self, weights: &DenseMatrix) -> io::Result<Vec<u8>> {
+    pub fn add_transform(mut self, f: F) -> Self {
+        self.transforms.push(f);
+        self
+    }
+
+    pub fn write_to_byte_buffer(&self, weights: &DenseMatrix<ExecutionContext>) -> io::Result<Vec<u8>> {
         let mut weight_buf = vec![0.0; weights.single_size()];
         let written = weights.write_to_slice(&mut weight_buf).unwrap();
         assert_eq!(written, weights.single_size());
 
         if let Layout::Transposed(shape) = self.layout {
             assert_eq!(shape.size(), weights.size());
-            weight_buf = transpose(shape, &weight_buf);
+            weight_buf = Self::transpose(shape, &weight_buf);
         }
 
         self.quant.quantise(&weight_buf)
+    }
+
+    pub fn transpose(shape: Shape, weights: &[f32]) -> Vec<f32> {
+        assert_eq!(shape.size(), weights.len());
+
+        let rows = shape.rows();
+        let cols = shape.cols();
+        let mut new_buf = vec![0.0; shape.size()];
+
+        for i in 0..rows {
+            for j in 0..cols {
+                new_buf[cols * i + j] = weights[rows * j + i];
+            }
+        }
+
+        new_buf
     }
 }
 
@@ -75,9 +99,10 @@ impl QuantTarget {
                     x.to_le_bytes().to_vec()
                 }
                 Self::I32(q) => {
-                    let x = (q as f32 * float) as i32;
+                    let qf = (f64::from(q) * f64::from(float)).trunc();
+                    let x = qf as i32;
 
-                    if (f64::from(float) * f64::from(q)).trunc() != f64::from(x) {
+                    if qf != f64::from(x) {
                         return Err(io::Error::new(io::ErrorKind::InvalidData, "Failed quantisation from f32 to i32!"));
                     }
 
@@ -90,20 +115,4 @@ impl QuantTarget {
 
         Ok(quantised)
     }
-}
-
-pub(super) fn transpose(shape: Shape, weights: &[f32]) -> Vec<f32> {
-    assert_eq!(shape.size(), weights.len());
-
-    let rows = shape.rows();
-    let cols = shape.cols();
-    let mut new_buf = vec![0.0; shape.size()];
-
-    for i in 0..rows {
-        for j in 0..cols {
-            new_buf[cols * i + j] = weights[rows * j + i];
-        }
-    }
-
-    new_buf
 }

@@ -33,7 +33,7 @@ fn main() {
         .input(inputs::Chess768)
         .output_buckets(outputs::Single)
         .feature_transformer(HIDDEN_SIZE)
-        .activate(Activation::SCReLU)
+        .activate(Activation::CReLU)
         .add_layer(1)
         .build();
 
@@ -44,10 +44,10 @@ fn main() {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
             start_superbatch: 1,
-            end_superbatch: 20,
+            end_superbatch: 40,
         },
         wdl_scheduler: wdl::ConstantWDL { value: 0.75 },
-        lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 8 },
+        lr_scheduler: lr::StepLR { start: 0.001, gamma: 0.1, step: 18 },
         save_rate: 10,
     };
 
@@ -56,7 +56,7 @@ fn main() {
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 64 };
 
     // loading from a SF binpack
-    let data_loader = {
+    let _data_loader = {
         let file_path = "data/test80-2024-02-feb-2tb7p.min-v2.v6.binpack";
         let buffer_size_mb = 1024;
         let threads = 4;
@@ -65,14 +65,14 @@ fn main() {
                 && !entry.pos.is_checked(entry.pos.side_to_move())
                 && entry.score.unsigned_abs() <= 10000
                 && entry.mv.mtype() == MoveType::Normal
-                && entry.pos.piece_at(entry.mv.to).piece_type() == PieceType::None
+                && entry.pos.piece_at(entry.mv.to()).piece_type() == PieceType::None
         }
 
         loader::SfBinpackLoader::new(file_path, buffer_size_mb, threads, filter)
     };
 
     // loading directly from a `BulletFormat` file
-    //let data_loader = loader::DirectSequentialDataLoader::new(&["data/baseline.data"]);
+    let data_loader = loader::DirectSequentialDataLoader::new(&["data/baseline.data"]);
 
     trainer.run(&schedule, &settings, &data_loader);
 }

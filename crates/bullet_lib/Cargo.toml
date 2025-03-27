@@ -10,36 +10,23 @@ rust-version = { workspace = true }
 edition = { workspace = true }
 
 [features]
-cuda = []
-hip = ["bullet_hip_backend/hip"]
+default = ["cuda"]
+cpu = []
+cuda = ["bullet_hip_backend"]
+hip = ["bullet_hip_backend", "bullet_hip_backend/hip"]
 gh-actions = ["bullet_hip_backend/gh-actions"]
 
 [dependencies]
-bullet_hip_backend = { workspace = true }
+bullet_hip_backend = { workspace = true, optional = true }
 bullet_core = { workspace = true }
 bulletformat = { workspace = true }
 montyformat = { workspace = true }
-sfbinpack = "0.2.0"
+sfbinpack = "0.4.1"
+viriformat = "1.0.0"
 
 [[example]]
 name = "advanced"
 path = "../../examples/advanced.rs"
-
-[[example]]
-name = "akimbo-main"
-path = "../../examples/akimbo-main.rs"
-
-[[example]]
-name = "ataxx"
-path = "../../examples/ataxx.rs"
-
-[[example]]
-name = "morelayers"
-path = "../../examples/morelayers.rs"
-
-[[example]]
-name = "relabel"
-path = "../../examples/relabel.rs"
 
 [[example]]
 name = "simple"
@@ -52,3 +39,27 @@ path = "../../examples/testnet.rs"
 [[example]]
 name = "viridithas"
 path = "../../examples/viridithas.rs"
+
+[[example]]
+name = "morelayers"
+path = "../../examples/morelayers.rs"
+
+[[example]]
+name = "akimbo-main"
+path = "../../examples/extra/akimbo-main.rs"
+
+[[example]]
+name = "ataxx"
+path = "../../examples/extra/ataxx.rs"
+
+[[example]]
+name = "relabel"
+path = "../../examples/extra/relabel.rs"
+
+[[example]]
+name = "attention"
+path = "../../examples/extra/attention.rs"
+
+[[example]]
+name = "fusion"
+path = "../../examples/extra/fusion.rs"

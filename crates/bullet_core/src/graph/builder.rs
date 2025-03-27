@@ -1,140 +1,341 @@
 use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    sync::Arc,
+    collections::HashMap,
+    ops::{Add, Div, Mul, Sub},
+    sync::{Mutex, MutexGuard},
 };
+
+pub use crate::backend::device::blas::Shape;
+use crate::backend::device::{base::DiffableFromOutput, Device};
 
 use super::{
-    error::GraphError,
-    operation::{GraphBuilderError, Operation},
-    Graph,
-};
-use crate::{
-    device::{Device, OperationError},
-    shape::Shape,
-    tensor::Tensor,
+    ir::{
+        args::GraphIRCompileArgs,
+        node::AnnotatedNode,
+        op::{GraphIROp, UnaryOp},
+        GraphIR,
+    },
+    Graph, Node,
 };
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct Node {
-    pub idx: usize,
-    pub shape: Shape,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    Identity,
+    ReLU,
+    CReLU,
+    SCReLU,
+    SqrReLU,
+    Sigmoid,
+    Square,
 }
 
-pub(crate) struct NodeData {
-    id: Option<String>,
-    size: usize,
-    requires_grad: bool,
-    parent_operation: Option<Operation>,
-    own: Node,
-}
-
-impl NodeData {
-    fn new(id: Option<String>, parent_operation: Option<Operation>, size: usize, requires_grad: bool) -> Self {
-        let own = Node { idx: usize::MAX, shape: Shape::new(usize::MAX, usize::MAX) };
-        Self { id, size, requires_grad, parent_operation, own }
-    }
+#[derive(Clone, Copy, Debug)]
+pub enum InitSettings {
+    Zeroed,
+    Normal { mean: f32, stdev: f32 },
+    Uniform { mean: f32, stdev: f32 },
 }
 
 #[derive(Default)]
 pub struct GraphBuilder {
-    nodes: Vec<NodeData>,
-    roots: HashSet<Node>,
-    inputs: HashSet<Node>,
-    weights: HashSet<Node>,
-    ids: HashSet<String>,
+    graph_builder: Mutex<GraphIR>,
+    init_data: Mutex<HashMap<String, InitSettings>>,
+    args: GraphIRCompileArgs,
 }
 
 impl GraphBuilder {
-    pub(crate) fn get_node(&self, node: Node) -> &NodeData {
-        &self.nodes[node.idx]
+    fn builder(&self) -> MutexGuard<GraphIR> {
+        self.graph_builder.try_lock().unwrap()
     }
 
-    fn create_node(&mut self, mut data: NodeData, shape: Shape) -> Result<Node, GraphBuilderError> {
-        if let Some(id) = data.id.as_ref() {
-            assert!(self.ids.insert(id.to_string()))
-        }
+    fn init(&self) -> MutexGuard<HashMap<String, InitSettings>> {
+        self.init_data.try_lock().unwrap()
+    }
 
-        let node = Node { idx: self.nodes.len(), shape };
-        data.own = node;
-
-        if let Some(op) = &data.parent_operation {
-            for parent in &op.nodes() {
-                self.roots.remove(parent);
+    fn apply(&self, operation: GraphIROp) -> GraphBuilderNode {
+        match self.builder().add_op(operation, true) {
+            Ok(node) => GraphBuilderNode { node, builder: self },
+            Err(e) => {
+                println!("{e:#?}");
+                panic!();
             }
         }
-
-        self.nodes.push(data);
-        self.roots.insert(node);
-
-        Ok(node)
     }
 
-    pub fn create_input(&mut self, id: &str, shape: Shape) -> Result<Node, GraphBuilderError> {
-        let data = NodeData::new(Some(id.to_string()), None, shape.size(), false);
-        let node = self.create_node(data, shape)?;
-
-        self.inputs.insert(node);
-
-        Ok(node)
+    pub fn new_dense_input<'a>(&'a self, id: &str, shape: Shape) -> GraphBuilderNode<'a> {
+        let node = self.builder().add_dense_input(id, shape).unwrap();
+        GraphBuilderNode { node, builder: self }
     }
 
-    pub fn create_weights(&mut self, id: &str, shape: Shape) -> Result<Node, GraphBuilderError> {
-        let data = NodeData::new(Some(id.to_string()), None, shape.size(), true);
-        let node = self.create_node(data, shape)?;
-
-        self.weights.insert(node);
-
-        Ok(node)
+    pub fn new_sparse_input<'a>(&'a self, id: &str, shape: Shape, nnz: usize) -> GraphBuilderNode<'a> {
+        let node = self.builder().add_sparse_input(id, shape, nnz).unwrap();
+        GraphBuilderNode { node, builder: self }
     }
 
-    pub fn create_result_of_operation(&mut self, operation: Operation) -> Result<Node, GraphBuilderError> {
-        match operation.output_shape() {
-            Ok(shape) => {
-                let data = NodeData::new(None, Some(operation), shape.size(), true);
-                self.create_node(data, shape)
-            }
-            Err(s) => panic!("{s:?}"),
+    pub fn new_weights<'a>(&'a self, id: &str, shape: Shape, init: InitSettings) -> GraphBuilderNode<'a> {
+        let node = self.builder().add_weights(id, shape).unwrap();
+        self.init().insert(id.to_string(), init);
+        GraphBuilderNode { node, builder: self }
+    }
+
+    pub fn new_affine(&self, id: &str, input_size: usize, output_size: usize) -> Affine {
+        self.new_affine_custom(id, input_size, output_size, 1)
+    }
+
+    pub fn new_affine_custom(&self, id: &str, input_size: usize, output_size: usize, bias_cols: usize) -> Affine {
+        let wid = format!("{}w", id);
+        let init = InitSettings::Normal { mean: 0.0, stdev: 1.0 / (input_size as f32 * bias_cols as f32).sqrt() };
+        let weights = self.new_weights(&wid, Shape::new(output_size, input_size), init);
+        let bias = self.new_weights(&format!("{}b", id), Shape::new(output_size, bias_cols), InitSettings::Zeroed);
+
+        Affine { weights, bias }
+    }
+
+    pub fn set_compile_args(&mut self, args: GraphIRCompileArgs) {
+        self.args = args;
+    }
+
+    pub fn build<D: Device>(self, device: D) -> Graph<D> {
+        let mut builder = self.graph_builder.into_inner().unwrap();
+        builder.add_op(GraphIROp::ReduceAcrossBatch(builder.root()), true).unwrap();
+        let mut graph = builder.compile(device, self.args).unwrap();
+
+        for (id, init_data) in self.init_data.lock().unwrap().iter() {
+            match *init_data {
+                InitSettings::Zeroed => {}
+                InitSettings::Normal { mean, stdev } => {
+                    graph.get_weights_mut(id).seed_random(mean, stdev, true).unwrap()
+                }
+                InitSettings::Uniform { mean, stdev } => {
+                    graph.get_weights_mut(id).seed_random(mean, stdev, false).unwrap()
+                }
+            };
+        }
+
+        graph
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct GraphBuilderNode<'a> {
+    node: AnnotatedNode,
+    builder: &'a GraphBuilder,
+}
+
+impl Add<Self> for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        self.linear_comb(1.0, rhs, 1.0)
+    }
+}
+
+impl Sub<Self> for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.linear_comb(1.0, rhs, -1.0)
+    }
+}
+
+impl<'a> Add<GraphBuilderNode<'a>> for f32 {
+    type Output = GraphBuilderNode<'a>;
+
+    fn add(self, rhs: GraphBuilderNode<'a>) -> Self::Output {
+        rhs.builder.apply(GraphIROp::Unary(rhs.node, UnaryOp::Add(self)))
+    }
+}
+
+impl Add<f32> for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn add(self, rhs: f32) -> Self::Output {
+        rhs + self
+    }
+}
+
+impl<'a> Sub<GraphBuilderNode<'a>> for f32 {
+    type Output = GraphBuilderNode<'a>;
+
+    fn sub(self, rhs: GraphBuilderNode<'a>) -> Self::Output {
+        self + (-1.0 * rhs)
+    }
+}
+
+impl Sub<f32> for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn sub(self, rhs: f32) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
+impl<'a> Mul<GraphBuilderNode<'a>> for f32 {
+    type Output = GraphBuilderNode<'a>;
+
+    fn mul(self, rhs: GraphBuilderNode<'a>) -> Self::Output {
+        rhs.builder.apply(GraphIROp::Unary(rhs.node, UnaryOp::Mul(self)))
+    }
+}
+
+impl Mul<f32> for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        rhs * self
+    }
+}
+
+impl Div<f32> for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        (1.0 / rhs) * self
+    }
+}
+
+impl GraphBuilderNode<'_> {
+    pub fn node(self) -> Node {
+        self.node.into()
+    }
+
+    pub fn reshape(mut self, shape: Shape) -> Self {
+        self.node = self.node.reshape(shape).unwrap();
+        self
+    }
+
+    pub fn relu(self) -> Self {
+        self.diffable_from_output(DiffableFromOutput::ReLU)
+    }
+
+    pub fn crelu(self) -> Self {
+        self.diffable_from_output(DiffableFromOutput::CReLU)
+    }
+
+    pub fn screlu(self) -> Self {
+        self.diffable_from_output(DiffableFromOutput::SCReLU)
+    }
+
+    pub fn sqrrelu(self) -> Self {
+        self.diffable_from_output(DiffableFromOutput::SqrReLU)
+    }
+
+    pub fn sigmoid(self) -> Self {
+        self.diffable_from_output(DiffableFromOutput::Sigmoid)
+    }
+
+    fn diffable_from_output(self, act: DiffableFromOutput) -> Self {
+        self.builder.apply(GraphIROp::Unary(self.node, UnaryOp::DiffableFromOutput(act)))
+    }
+
+    pub fn activate(self, act: Activation) -> Self {
+        match act {
+            Activation::Identity => self.diffable_from_output(DiffableFromOutput::Identity),
+            Activation::ReLU => self.relu(),
+            Activation::CReLU => self.crelu(),
+            Activation::SCReLU => self.screlu(),
+            Activation::Sigmoid => self.sigmoid(),
+            Activation::SqrReLU => self.sqrrelu(),
+            Activation::Square => self.abs_pow(2.0),
         }
     }
 
-    pub fn root(&self) -> Node {
-        assert_eq!(self.roots.len(), 1, "Graph must have a single output!");
-        *self.roots.iter().next().unwrap()
+    pub fn select(self, buckets: Self) -> Self {
+        self.builder.apply(GraphIROp::Select(self.node, buckets.node))
     }
 
-    pub fn build<D: Device>(self, device: D) -> Result<Graph<D>, GraphError<D::DeviceError>> {
-        assert_eq!(self.roots.len(), 1, "Graph must have a single output!");
+    pub fn concat(self, rhs: Self) -> Self {
+        self.builder.apply(GraphIROp::Concat(self.node, rhs.node))
+    }
 
-        let root = *self.roots.iter().next().unwrap();
-        assert!(self.get_node(root).requires_grad, "Output cannot be an input!");
-        assert!(!self.weights.contains(&root), "Can't output trainable weights!");
-        assert_eq!(root.shape, Shape::new(1, 1), "Graph output must be scalar!");
-        assert_eq!(self.get_node(root).size, 1);
+    pub fn linear_comb(self, alpha: f32, rhs: Self, beta: f32) -> Self {
+        self.builder.apply(GraphIROp::LinearCombination(alpha, self.node, beta, rhs.node))
+    }
 
-        let device = Arc::new(device);
-
-        let mut nodes = Vec::new();
-        for node_data in &self.nodes {
-            let tensor = Tensor::new(
-                device.clone(),
-                node_data.size,
-                node_data.requires_grad,
-                node_data.parent_operation,
-                node_data.own,
-            );
-            let tensor = tensor.map_err(OperationError::from);
-
-            nodes.push(RefCell::new(tensor?));
+    pub fn matmul(self, rhs: Self) -> Self {
+        if rhs.node.is_sparse() {
+            self.builder.apply(GraphIROp::SparseAffineActivate(self.node, rhs.node, None, DiffableFromOutput::Identity))
+        } else {
+            self.builder.apply(GraphIROp::Matmul(self.node, false, rhs.node, false))
         }
+    }
 
-        let inputs =
-            self.inputs.iter().map(|&node| (self.get_node(node).id.clone().unwrap(), node)).collect::<HashMap<_, _>>();
+    pub fn gemm(self, transa: bool, rhs: Self, transb: bool) -> Self {
+        self.builder.apply(GraphIROp::Matmul(self.node, transa, rhs.node, transb))
+    }
 
-        let weights =
-            self.weights.iter().map(|&node| (self.get_node(node).id.clone().unwrap(), node)).collect::<HashMap<_, _>>();
+    pub fn power_error(self, targets: Self, power: f32) -> Self {
+        self.builder.apply(GraphIROp::Unary((self - targets).node, UnaryOp::AbsPow(power)))
+    }
 
-        Ok(Graph { nodes, root, inputs, weights, device })
+    pub fn squared_error(self, targets: Self) -> Self {
+        self.power_error(targets, 2.0)
+    }
+
+    #[deprecated]
+    pub fn mpe(self, targets: Self, power: f32) -> Self {
+        self.power_error(targets, power)
+    }
+
+    #[deprecated]
+    pub fn mse(self, targets: Self) -> Self {
+        self.squared_error(targets)
+    }
+
+    pub fn pairwise_mul(self) -> Self {
+        self.builder.apply(GraphIROp::PairwiseMul(self.node, false))
+    }
+
+    pub fn pairwise_mul_post_affine_dual(self) -> Self {
+        self.builder.apply(GraphIROp::PairwiseMul(self.node, true))
+    }
+
+    pub fn abs_pow(self, power: f32) -> Self {
+        self.builder.apply(GraphIROp::Unary(self.node, UnaryOp::AbsPow(power)))
+    }
+
+    pub fn mask(self, mask: Self) -> Self {
+        self.builder.apply(GraphIROp::Mask(self.node, mask.node))
+    }
+
+    pub fn gather(self, indices: Self) -> Self {
+        self.builder.apply(GraphIROp::Gather(self.node, indices.node))
+    }
+
+    pub fn softmax_crossentropy_loss(self, targets: Self) -> Self {
+        self.builder.apply(GraphIROp::SoftmaxCrossEntropyLoss(self.node, targets.node))
+    }
+
+    pub fn masked_softmax_crossentropy_loss(self, targets: Self, mask: Self) -> Self {
+        self.builder.apply(GraphIROp::MaskedSoftmaxCrossEntropyLoss(mask.node, self.node, targets.node))
+    }
+
+    pub fn slice_rows(self, start: usize, end: usize) -> Self {
+        self.builder.apply(GraphIROp::Slice(self.node, start, end))
+    }
+
+    pub fn to_dense(self) -> Self {
+        let node = self.builder.builder().add_op(GraphIROp::ToDense(self.node), false).unwrap();
+        Self { node, builder: self.builder }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Affine<'a> {
+    pub weights: GraphBuilderNode<'a>,
+    pub bias: GraphBuilderNode<'a>,
+}
+
+impl<'a> Affine<'a> {
+    pub fn forward(self, input: GraphBuilderNode<'a>) -> GraphBuilderNode<'a> {
+        self.weights.matmul(input) + self.bias
+    }
+
+    pub fn forward_sparse_dual_with_activation(
+        self,
+        stm: GraphBuilderNode<'a>,
+        ntm: GraphBuilderNode<'a>,
+        activation: Activation,
+    ) -> GraphBuilderNode<'a> {
+        self.forward(stm).concat(self.forward(ntm)).activate(activation)
     }
 }

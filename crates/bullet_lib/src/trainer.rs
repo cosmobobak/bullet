@@ -1,4 +1,3 @@
-pub mod default;
 pub mod logger;
 mod preparer;
 pub mod save;
@@ -6,11 +5,13 @@ pub mod schedule;
 pub mod settings;
 
 use bullet_core::optimiser::{Optimiser, OptimiserState};
-use bullet_hip_backend::ExecutionContext;
 pub use preparer::DataPreparer;
 use save::SavedFormat;
 use schedule::{lr::LrScheduler, wdl::WdlScheduler, TrainingSchedule};
 use settings::LocalSettings;
+
+pub use crate::default;
+use crate::ExecutionContext;
 
 use std::{
     fs::File,
@@ -37,7 +38,7 @@ pub trait NetworkTrainer {
             Err(e) => {
                 println!();
                 println!("An unrecoverable error occurred:");
-                println!("{e}");
+                println!("{e:#?}");
                 std::process::exit(1);
             }
         };
@@ -47,13 +48,6 @@ pub trait NetworkTrainer {
         self.optimiser_mut().update(gf, lr).unwrap();
 
         self.optimiser().graph.synchronise().unwrap();
-
-        if let Err(e) = self.optimiser().graph.get_last_device_error() {
-            println!();
-            println!("An unrecoverable error occurred:");
-            println!("{e:?}");
-            std::process::exit(1);
-        }
 
         error
     }
@@ -102,7 +96,6 @@ pub trait NetworkTrainer {
         self.optimiser().graph.synchronise().unwrap();
 
         let steps = schedule.steps;
-        let pos_per_sb = steps.batch_size * steps.batches_per_superbatch;
 
         let (sender, receiver) = mpsc::sync_channel::<D1::PreparedData>(settings.batch_queue_size);
 
@@ -111,7 +104,7 @@ pub trait NetworkTrainer {
 
         let mut validation_freq = settings.test_set.map_or(32, |test| test.freq);
 
-        if validation_freq < 32 {
+        if steps.batches_per_superbatch >= 32 && validation_freq < 32 {
             println!("Setting validation frequency to every 32 batches, come on ...");
             validation_freq = 32;
         }
@@ -137,10 +130,17 @@ pub trait NetworkTrainer {
         let mut curr_batch = 0;
         let mut superbatch_timer = Instant::now();
         let mut running_loss = 0.0;
+        let mut superbatch_positions = 0;
 
         let mut prev32_loss = 0.0;
 
         while let Ok(prepared_data) = receiver.recv() {
+            // ignore startup time from loading the first batch of data
+            // because it just poisons the reported pos/sec
+            if superbatch == steps.start_superbatch && curr_batch == 0 {
+                superbatch_timer = Instant::now();
+            }
+
             let lrate = schedule.lr(curr_batch, superbatch);
 
             if curr_batch == 0 {
@@ -160,6 +160,7 @@ pub trait NetworkTrainer {
 
             running_loss += error;
             prev32_loss += error;
+            superbatch_positions += this_batch_size;
 
             // Track test loss every freq batches.
             if curr_batch % validation_freq == 0 {
@@ -172,7 +173,7 @@ pub trait NetworkTrainer {
                         Err(e) => {
                             println!();
                             println!("An unrecoverable error occurred:");
-                            println!("{e}");
+                            println!("{e:#?}");
                             std::process::exit(1);
                         }
                     };
@@ -184,10 +185,10 @@ pub trait NetworkTrainer {
             if curr_batch % 128 == 0 {
                 logger::report_superbatch_progress(
                     superbatch,
-                    steps.batch_size,
                     steps.batches_per_superbatch,
                     curr_batch,
                     &superbatch_timer,
+                    superbatch_positions,
                 );
             }
 
@@ -208,7 +209,7 @@ pub trait NetworkTrainer {
                 let total_time = timer.elapsed().as_secs_f32();
                 let sb_time = superbatch_timer.elapsed().as_secs_f32();
 
-                logger::report_superbatch_finished(superbatch, error, sb_time, total_time, pos_per_sb);
+                logger::report_superbatch_finished(superbatch, error, sb_time, total_time, superbatch_positions);
                 logger::report_time_left(steps, superbatch, total_time);
 
                 if schedule.should_save(superbatch) {
@@ -231,6 +232,7 @@ pub trait NetworkTrainer {
                 superbatch += 1;
                 curr_batch = 0;
                 prev32_loss = 0.0;
+                superbatch_positions = 0;
                 superbatch_timer = Instant::now();
             }
         }
@@ -261,7 +263,7 @@ pub trait NetworkTrainer {
 
         for fmt in weights {
             let weights = self.optimiser().graph.get_weights(&fmt.id);
-            buf.extend_from_slice(&fmt.write_to_byte_buffer(weights.values.dense())?);
+            buf.extend_from_slice(&fmt.write_to_byte_buffer(weights.values.dense().unwrap())?);
         }
 
         file.write_all(&buf)?;

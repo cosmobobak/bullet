@@ -1,12 +1,12 @@
-mod activate;
-mod affine;
 mod concat;
+mod matmul;
 mod sparse_affine;
+mod unary;
 
-pub use activate::*;
-pub use affine::*;
 pub use concat::*;
+pub use matmul::*;
 pub use sparse_affine::*;
+pub use unary::*;
 
 #[macro_export]
 macro_rules! make_tests {
