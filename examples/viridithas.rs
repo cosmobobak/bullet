@@ -2,15 +2,15 @@ use bullet_lib::{
     default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountFarseer},
     nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
-        Activation, ExecutionContext, Graph, NetworkBuilder, Node, Shape,
+        ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     },
+    trainer::NetworkTrainer,
     trainer::{
         default::{inputs, loader, outputs, Trainer},
         save::{Layout, QuantTarget, SavedFormat},
         schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
         settings::LocalSettings,
     },
-    NetworkTrainer,
 };
 
 const HL: usize = 2048;
@@ -36,11 +36,12 @@ fn main() {
     ]);
     let output_buckets = Output::default();
 
-    let num_inputs = <Input as inputs::SparseInputType>::num_inputs(&inputs);
+    let num_inputs = inputs::SparseInputType::num_inputs(&inputs);
+    let max_active = inputs::SparseInputType::max_active(&inputs);
     let num_buckets = <Output as outputs::OutputBuckets<_>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
-    let (graph, output_node) = build_network(num_inputs, num_buckets, HL);
+    let (graph, output_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
@@ -110,14 +111,14 @@ fn main() {
     println!("Eval: {eval:.3}cp");
 }
 
-fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph, Node) {
+fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node) {
     let builder = NetworkBuilder::default();
 
     // inputs
-    let stm = builder.new_input("stm", Shape::new(num_inputs, 1));
-    let nstm = builder.new_input("nstm", Shape::new(num_inputs, 1));
-    let targets = builder.new_input("targets", Shape::new(1, 1));
-    let buckets = builder.new_input("buckets", Shape::new(output_buckets, 1));
+    let stm = builder.new_sparse_input("stm", Shape::new(num_inputs, 1), max_active);
+    let nstm = builder.new_sparse_input("nstm", Shape::new(num_inputs, 1), max_active);
+    let targets = builder.new_dense_input("targets", Shape::new(1, 1));
+    let buckets = builder.new_sparse_input("buckets", Shape::new(output_buckets, 1), 1);
 
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
@@ -126,14 +127,16 @@ fn build_network(num_inputs: usize, output_buckets: usize, hl: usize) -> (Graph,
     let l3 = builder.new_affine("l3", L3, output_buckets);
 
     // inference
-    let out = l0.forward_sparse_dual_with_activation(stm, nstm, Activation::CReLU);
+    let stm_subnet = l0.forward(stm).crelu();
+    let ntm_subnet = l0.forward(nstm).crelu();
+    let out = stm_subnet.concat(ntm_subnet);
     let out = out.pairwise_mul_post_affine_dual();
-    let out = l1.forward(out).select(buckets).activate(Activation::SCReLU);
-    let out = l2.forward(out).select(buckets).activate(Activation::SCReLU);
+    let out = l1.forward(out).select(buckets).screlu();
+    let out = l2.forward(out).select(buckets).screlu();
     let out = l3.forward(out).select(buckets);
 
-    let pred = out.activate(Activation::Sigmoid);
-    pred.mse(targets);
+    let pred = out.sigmoid();
+    pred.squared_error(targets);
 
     // graph, output node
     let output_node = out.node();
