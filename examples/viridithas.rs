@@ -93,7 +93,7 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.0 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
         lr_scheduler: lr::Warmup {
             inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 800,
