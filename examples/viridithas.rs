@@ -103,7 +103,7 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/relabeled.bin"]);
+    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
 
     trainer.run(&schedule, &settings, &data_loader);
 
