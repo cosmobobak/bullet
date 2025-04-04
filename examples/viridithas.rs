@@ -62,7 +62,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
-    trainer.load_from_checkpoint("checkpoints/perseverance-200");
+    trainer.load_from_checkpoint("checkpoints/kolibri-800");
 
     let initial_lr;
     let final_lr;
