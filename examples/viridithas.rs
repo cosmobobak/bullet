@@ -123,10 +123,9 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     l0.init_with_effective_input_size(64);
 
     // inference
-    let stm_subnet = l0.forward(stm).crelu();
-    let ntm_subnet = l0.forward(nstm).crelu();
+    let stm_subnet = l0.forward(stm).crelu().pairwise_mul();
+    let ntm_subnet = l0.forward(nstm).crelu().pairwise_mul();
     let out = stm_subnet.concat(ntm_subnet);
-    let out = out.pairwise_mul_post_affine_dual();
     let out = l1.forward(out).select(buckets).screlu();
     let out = l2.forward(out).select(buckets).screlu();
     let out = l3.forward(out).select(buckets);
