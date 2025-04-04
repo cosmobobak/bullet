@@ -1,23 +1,16 @@
 use bullet_lib::{
-    default::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCountFarseer},
-    nn::{
+    default::inputs::ChessBucketsMirroredFactorised, game::outputs::MaterialCountFarseer, nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         ExecutionContext, Graph, NetworkBuilder, Node, Shape,
-    },
-    trainer::NetworkTrainer,
-    trainer::{
-        default::{inputs, loader, outputs, Trainer},
-        save::{Layout, QuantTarget, SavedFormat},
-        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
-        settings::LocalSettings,
-    },
+    }, trainer::{default::{inputs, loader, outputs, Trainer}, save::{Layout, QuantTarget, SavedFormat}, schedule::{lr, wdl, TrainingSchedule, TrainingSteps}, settings::LocalSettings, NetworkTrainer}
 };
+use bulletformat::ChessBoard;
 
 const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = false;
+const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCountFarseer;
@@ -38,7 +31,7 @@ fn main() {
 
     let num_inputs = inputs::SparseInputType::num_inputs(&inputs);
     let max_active = inputs::SparseInputType::max_active(&inputs);
-    let num_buckets = <Output as outputs::OutputBuckets<_>>::BUCKETS;
+    let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
     let (graph, output_node) = build_network(num_inputs, max_active, num_buckets, HL);
@@ -69,7 +62,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
-    // trainer.load_from_checkpoint("checkpoints/temperance-200");
+    trainer.load_from_checkpoint("checkpoints/alembic-800");
 
     let initial_lr;
     let final_lr;
@@ -85,7 +78,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "umwelt".into(),
+        net_id: "falke".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
