@@ -1,5 +1,5 @@
 use bullet_lib::{
-    default::inputs::ChessBucketsMirroredFactorised, game::outputs::MaterialCountFarseer, nn::{
+    default::inputs::ChessBucketsMirroredFactorised, game::outputs::MaterialCount, nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     }, trainer::{default::{inputs, loader, outputs, Trainer}, save::{Layout, QuantTarget, SavedFormat}, schedule::{lr, wdl, TrainingSchedule, TrainingSteps}, settings::LocalSettings, NetworkTrainer}
@@ -13,7 +13,7 @@ const L3: usize = 32;
 const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirroredFactorised;
-type Output = MaterialCountFarseer;
+type Output = MaterialCount<8>;
 
 fn main() {
     #[rustfmt::skip]
@@ -62,7 +62,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
-    trainer.load_from_checkpoint("checkpoints/alembic-800");
+    trainer.load_from_checkpoint("checkpoints/perseverance-200");
 
     let initial_lr;
     let final_lr;
