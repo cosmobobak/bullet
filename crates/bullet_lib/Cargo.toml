@@ -61,5 +61,5 @@ name = "attention"
 path = "../../examples/extra/attention.rs"
 
 [[example]]
-name = "fusion"
-path = "../../examples/extra/fusion.rs"
+name = "policy"
+path = "../../examples/extra/policy.rs"

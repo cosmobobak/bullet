@@ -4,18 +4,19 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-pub use crate::backend::device::blas::Shape;
-use crate::backend::device::{base::DiffableFromOutput, Device};
+use crate::backend::device::Device;
 
 use super::{
     ir::{
         args::GraphIRCompileArgs,
         node::AnnotatedNode,
-        op::{GraphIROp, UnaryOp},
+        op::{DiffableFromOutput, GraphIROp, UnaryOp},
         GraphIR,
     },
     Graph, Node,
 };
+
+pub use crate::graph::ir::shape::Shape;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Activation {
@@ -52,7 +53,7 @@ impl GraphBuilder {
     }
 
     fn apply(&self, operation: GraphIROp) -> GraphBuilderNode {
-        match self.builder().add_op(operation, true) {
+        match self.builder().add_op(operation) {
             Ok(node) => GraphBuilderNode { node, builder: self },
             Err(e) => {
                 println!("{e:#?}");
@@ -83,7 +84,7 @@ impl GraphBuilder {
 
     pub fn new_affine_custom(&self, id: &str, input_size: usize, output_size: usize, bias_cols: usize) -> Affine {
         let wid = format!("{}w", id);
-        let init = InitSettings::Normal { mean: 0.0, stdev: 1.0 / (input_size as f32 * bias_cols as f32).sqrt() };
+        let init = InitSettings::Normal { mean: 0.0, stdev: (2.0 / (input_size as f32 * bias_cols as f32)).sqrt() };
         let weights = self.new_weights(&wid, Shape::new(output_size, input_size), init);
         let bias = self.new_weights(&format!("{}b", id), Shape::new(output_size, bias_cols), InitSettings::Zeroed);
 
@@ -96,7 +97,7 @@ impl GraphBuilder {
 
     pub fn build<D: Device>(self, device: D) -> Graph<D> {
         let mut builder = self.graph_builder.into_inner().unwrap();
-        builder.add_op(GraphIROp::ReduceAcrossBatch(builder.root()), true).unwrap();
+        builder.add_op(GraphIROp::ReduceAcrossBatch(builder.root().unwrap())).unwrap();
         let mut graph = builder.compile(device, self.args).unwrap();
 
         for (id, init_data) in self.init_data.lock().unwrap().iter() {
@@ -252,7 +253,7 @@ impl GraphBuilderNode<'_> {
     }
 
     pub fn matmul(self, rhs: Self) -> Self {
-        if rhs.node.is_sparse() {
+        if self.builder.builder().get(rhs.node.idx).unwrap().sparse.is_some() {
             self.builder.apply(GraphIROp::SparseAffineActivate(self.node, rhs.node, None, DiffableFromOutput::Identity))
         } else {
             self.builder.apply(GraphIROp::Matmul(self.node, false, rhs.node, false))
@@ -314,7 +315,7 @@ impl GraphBuilderNode<'_> {
     }
 
     pub fn to_dense(self) -> Self {
-        let node = self.builder.builder().add_op(GraphIROp::ToDense(self.node), false).unwrap();
+        let node = self.builder.builder().add_op(GraphIROp::ToDense(self.node)).unwrap();
         Self { node, builder: self.builder }
     }
 }
@@ -328,6 +329,14 @@ pub struct Affine<'a> {
 impl<'a> Affine<'a> {
     pub fn forward(self, input: GraphBuilderNode<'a>) -> GraphBuilderNode<'a> {
         self.weights.matmul(input) + self.bias
+    }
+
+    pub fn init_with_effective_input_size(&self, size: usize) {
+        let builder = self.weights.builder.builder();
+        let w = builder.get(self.weights.node.idx).unwrap();
+        let id = w.id.clone().unwrap();
+        *self.weights.builder.init().get_mut(&id).unwrap() =
+            InitSettings::Normal { mean: 0.0, stdev: (2.0 / size as f32).sqrt() };
     }
 
     pub fn forward_sparse_dual_with_activation(

@@ -1,9 +1,10 @@
 use crate::{
-    backend::device::{base::DiffableFromOutput, blas::Shape, Device, OperationError},
+    backend::device::{Device, OperationError},
     graph::{
         ir::{
             args::GraphIRCompileArgs,
-            op::{GraphIROp, UnaryOp},
+            op::{DiffableFromOutput, GraphIROp, UnaryOp},
+            shape::Shape,
             GraphIR,
         },
         GraphError,
@@ -34,8 +35,8 @@ fn run_test<D: Device>(
 ) -> Result<(), GraphError<D::DeviceError>> {
     let mut builder = GraphIR::default();
     let w = builder.add_weights("w", Shape::new(1, 1)).unwrap();
-    let out = builder.add_op(GraphIROp::Unary(w, UnaryOp::DiffableFromOutput(activation)), true).unwrap();
-    builder.add_op(GraphIROp::ReduceAcrossBatch(out), true).unwrap();
+    let out = builder.add_op(GraphIROp::Unary(w, UnaryOp::DiffableFromOutput(activation))).unwrap();
+    builder.add_op(GraphIROp::ReduceAcrossBatch(out)).unwrap();
     let mut graph = builder.compile(device, GraphIRCompileArgs::default()).unwrap();
 
     graph.get_weights_mut("w").load_dense_from_slice(Some(4), &[-1.0, 0.5, 2.0, -2.0]).unwrap();

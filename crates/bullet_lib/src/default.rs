@@ -1,12 +1,6 @@
 mod builder;
 pub mod gamerunner;
-/// Contains the `InputType` trait for implementing custom input types,
-/// as well as several premade input formats that are commonly used.
-pub mod inputs;
 pub mod loader;
-/// Contains the `OutputBuckets` trait for implementing custom output bucket types,
-/// as well as several premade output buckets that are commonly used.
-pub mod outputs;
 pub mod testing;
 
 /// Re-exports crates for certain file formats (e.g. Bulletformat)
@@ -16,13 +10,13 @@ pub mod formats {
     pub use sfbinpack;
 }
 
+pub use crate::game::{inputs, outputs};
 pub use builder::{Loss, TrainerBuilder};
 
-use inputs::SparseInputType;
 use loader::{
     CanBeDirectlySequentiallyLoaded, DataLoader, DefaultDataLoader, DefaultDataPreparer, DirectSequentialDataLoader,
+    LoadableDataType,
 };
-use outputs::OutputBuckets;
 use testing::{EngineType, TestSettings};
 
 use std::{
@@ -32,6 +26,7 @@ use std::{
 };
 
 use crate::{
+    game::{inputs::SparseInputType, outputs::OutputBuckets},
     nn::DeviceError,
     trainer::{
         logger,
@@ -59,7 +54,7 @@ pub struct AdditionalTrainerInputs {
     wdl: bool,
 }
 
-pub struct Trainer<Opt: OptimiserState<ExecutionContext>, Inp, Out = outputs::Single> {
+pub struct Trainer<Opt: OptimiserState<ExecutionContext>, Inp, Out> {
     optimiser: Optimiser<ExecutionContext, Opt>,
     input_getter: Inp,
     output_getter: Out,
@@ -162,7 +157,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
 
     pub fn eval_raw_output(&mut self, fen: &str) -> Vec<f32>
     where
-        Inp::RequiredDataType: std::str::FromStr<Err = String>,
+        Inp::RequiredDataType: std::str::FromStr<Err = String> + LoadableDataType,
     {
         let pos = format!("{fen} | 0 | 0.0").parse::<Inp::RequiredDataType>().unwrap();
 
@@ -189,7 +184,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
 
     pub fn eval(&mut self, fen: &str) -> f32
     where
-        Inp::RequiredDataType: std::str::FromStr<Err = String>,
+        Inp::RequiredDataType: std::str::FromStr<Err = String> + LoadableDataType,
     {
         let vals = self.eval_raw_output(fen);
 
@@ -242,7 +237,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
 
         let mut buf = Vec::new();
 
-        for SavedFormat { id, quant, layout, transforms } in &self.saved_format {
+        for SavedFormat { id, quant, layout, transforms, round } in &self.saved_format {
             let weights = self.optimiser.graph.get_weights(id);
             let weights = weights.values.dense().unwrap();
 
@@ -265,14 +260,14 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
 
             if let Layout::Transposed(shape) = layout {
                 assert_eq!(shape.size(), weights.size());
-                weight_buf = SavedFormat::transpose(*shape, &weight_buf);
+                weight_buf = SavedFormat::transpose_impl(*shape, &weight_buf);
             }
 
             for transform in transforms {
-                weight_buf = transform(&self.optimiser.graph, weight_buf);
+                weight_buf = transform(&self.optimiser.graph, id, weight_buf);
             }
 
-            let quantised = match quant.quantise(&weight_buf) {
+            let quantised = match quant.quantise(*round, &weight_buf) {
                 Ok(q) => q,
                 Err(err) => {
                     println!("Quantisation failed for id: {}", id);
@@ -310,7 +305,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
             let written = weights.write_to_slice(&mut weight_buf).unwrap();
             assert_eq!(written, weights.size());
 
-            let quantised = QuantTarget::Float.quantise(&weight_buf)?;
+            let quantised = QuantTarget::Float.quantise(false, &weight_buf)?;
             buf.extend_from_slice(&quantised);
         }
 
@@ -375,35 +370,44 @@ fn display_total_positions<T, D: DataLoader<T>>(data_loader: &D, steps: Training
 impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuckets<Inp::RequiredDataType>>
     Trainer<Opt, Inp, Out>
 where
-    Inp::RequiredDataType: CanBeDirectlySequentiallyLoaded,
+    Inp::RequiredDataType: CanBeDirectlySequentiallyLoaded + LoadableDataType,
 {
-    pub fn run<D: DataLoader<Inp::RequiredDataType>, LR: LrScheduler, WDL: WdlScheduler>(
+    pub fn run(
         &mut self,
-        schedule: &TrainingSchedule<LR, WDL>,
+        schedule: &TrainingSchedule<impl LrScheduler, impl WdlScheduler>,
         settings: &LocalSettings,
-        data_loader: &D,
+        data_loader: &impl DataLoader<Inp::RequiredDataType>,
     ) {
-        let test_loader = settings.test_set.map(|test| DirectSequentialDataLoader::new(&[test.path]));
-        let (preparer, test_preparer) = self.training_preamble(schedule, settings, data_loader, &test_loader);
-
-        self.train_custom(&preparer, &test_preparer, schedule, settings, |_, _, _, _| {});
+        self.run_with_callback(schedule, settings, data_loader, |_, _, _, _| {});
     }
 
-    pub fn run_and_test<D: DataLoader<Inp::RequiredDataType>, LR: LrScheduler, WDL: WdlScheduler, T: EngineType>(
+    pub fn run_with_callback<LR: LrScheduler, WDL: WdlScheduler>(
         &mut self,
         schedule: &TrainingSchedule<LR, WDL>,
         settings: &LocalSettings,
-        data_loader: &D,
-        testing: &TestSettings<T>,
+        data_loader: &impl DataLoader<Inp::RequiredDataType>,
+        mut callback: impl FnMut(usize, &Self, &TrainingSchedule<LR, WDL>, &LocalSettings),
     ) {
         let test_loader = settings.test_set.map(|test| DirectSequentialDataLoader::new(&[test.path]));
         let (preparer, test_preparer) = self.training_preamble(schedule, settings, data_loader, &test_loader);
 
+        self.train_custom(&preparer, &test_preparer, schedule, settings, |superbatch, trainer, schedule, settings| {
+            callback(superbatch, trainer, schedule, settings)
+        });
+    }
+
+    pub fn run_and_test(
+        &mut self,
+        schedule: &TrainingSchedule<impl LrScheduler, impl WdlScheduler>,
+        settings: &LocalSettings,
+        data_loader: &impl DataLoader<Inp::RequiredDataType>,
+        testing: &TestSettings<impl EngineType>,
+    ) {
         testing.setup(schedule);
 
         let mut handles = Vec::new();
 
-        self.train_custom(&preparer, &test_preparer, schedule, settings, |superbatch, trainer, schedule, _| {
+        self.run_with_callback(schedule, settings, data_loader, |superbatch, trainer, schedule, _| {
             if superbatch % testing.test_rate == 0 || superbatch == schedule.steps.end_superbatch {
                 trainer.save_to_checkpoint(&format!("{}/nets/{}-{superbatch}", testing.out_dir, schedule.net_id));
                 let handle = testing.dispatch(&schedule.net_id, superbatch);
