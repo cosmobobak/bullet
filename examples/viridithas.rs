@@ -126,6 +126,9 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
 
+    // 32 + 32 due to feature factoriser
+    l0.init_with_effective_input_size(64);
+
     // inference
     let stm_subnet = l0.forward(stm).crelu();
     let ntm_subnet = l0.forward(nstm).crelu();
