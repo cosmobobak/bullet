@@ -15,7 +15,7 @@ pub use builder::{Loss, TrainerBuilder};
 
 use loader::{
     CanBeDirectlySequentiallyLoaded, DataLoader, DefaultDataLoader, DefaultDataPreparer, DirectSequentialDataLoader,
-    LoadableDataType,
+    LoadableDataType, TargetType,
 };
 use testing::{EngineType, TestSettings};
 
@@ -51,7 +51,7 @@ unsafe impl CanBeDirectlySequentiallyLoaded for bulletformat::chess::MarlinForma
 
 #[derive(Clone, Copy)]
 pub struct AdditionalTrainerInputs {
-    wdl: bool,
+    wdl: TargetType,
 }
 
 pub struct Trainer<Opt: OptimiserState<ExecutionContext>, Inp, Out> {
@@ -128,9 +128,14 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
         let output_shape = output_node.shape;
 
         assert_eq!(output_shape.cols(), 1, "Output cannot have >1 column!");
-        assert!(output_shape.rows() == 1 || output_shape.rows() == 3, "Only supports 1 or 3 outputs!");
 
-        let wdl = output_shape.rows() == 3;
+        let rows = output_shape.rows();
+        let wdl = match rows {
+            1 => TargetType::Value,
+            3 => TargetType::WDL,
+            4 => TargetType::ValueAndWDL,
+            x => panic!("Only supports 1, 3, or 4 outputs, got {x}!")
+        };
 
         if inputs.len() != expected {
             println!("WARNING: The network graph contains an unexpected number of inputs!")

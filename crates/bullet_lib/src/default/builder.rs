@@ -5,6 +5,7 @@ use crate::{
         GraphCompileArgs, InitSettings, NetworkBuilder,
     },
     trainer::{logger, save::QuantTarget},
+    value::loader::TargetType,
     Activation, ExecutionContext, Shape,
 };
 
@@ -436,7 +437,14 @@ impl<T: SparseInputType, U: OutputBuckets<T::RequiredDataType>, O: OptimiserType
             input_getter: input_getter.clone(),
             output_getter: self.bucket_getter,
             output_node,
-            additional_inputs: AdditionalTrainerInputs { wdl: output_size == 3 },
+            additional_inputs: AdditionalTrainerInputs {
+                wdl: match output_size {
+                    1 => TargetType::Value,
+                    3 => TargetType::WDL,
+                    4 => TargetType::ValueAndWDL,
+                    x => panic!("Only supports 1, 3, or 4 outputs, got {x}!"),
+                },
+            },
             saved_format: saved_format.clone(),
             factorised_weights,
         };

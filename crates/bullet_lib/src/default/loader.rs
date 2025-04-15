@@ -58,13 +58,13 @@ pub trait DataLoader<T>: Clone + Send + Sync + 'static {
 pub struct DefaultDataLoader<I, O, D> {
     input_getter: I,
     output_getter: O,
-    wdl: bool,
+    wdl: TargetType,
     scale: f32,
     loader: D,
 }
 
 impl<I, O, D> DefaultDataLoader<I, O, D> {
-    pub fn new(input_getter: I, output_getter: O, wdl: bool, scale: f32, loader: D) -> Self {
+    pub fn new(input_getter: I, output_getter: O, wdl: TargetType, scale: f32, loader: D) -> Self {
         Self { input_getter, output_getter, wdl, scale, loader }
     }
 }
@@ -125,12 +125,19 @@ pub struct DefaultDataPreparer<I, O> {
     pub(crate) targets: DenseInput,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TargetType {
+    Value,
+    WDL,
+    ValueAndWDL,
+}
+
 impl<I: SparseInputType, O: OutputBuckets<I::RequiredDataType>> DefaultDataPreparer<I, O> {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         input_getter: I,
         output_getter: O,
-        wdl: bool,
+        wdl: TargetType,
         data: &[I::RequiredDataType],
         threads: usize,
         blend: f32,
@@ -144,7 +151,11 @@ impl<I: SparseInputType, O: OutputBuckets<I::RequiredDataType>> DefaultDataPrepa
         let max_active = input_getter.max_active();
         let chunk_size = batch_size.div_ceil(threads);
         let input_size = input_getter.num_inputs();
-        let output_size = if wdl { 3 } else { 1 };
+        let output_size = match wdl {
+            TargetType::Value => 1,
+            TargetType::WDL => 3,
+            TargetType::ValueAndWDL => 4,
+        };
         let sparse_size = max_active * batch_size;
 
         let mut prep = Self {
@@ -197,12 +208,21 @@ impl<I: SparseInputType, O: OutputBuckets<I::RequiredDataType>> DefaultDataPrepa
 
                             buckets_chunk[i] = i32::from(out.bucket(pos));
 
-                            if wdl {
-                                results_chunk[output_size * i + usize::from(pos.result() as u8)] = 1.0;
-                            } else {
-                                let score = 1. / (1. + (-rscale * f32::from(pos.score())).exp());
-                                let result = f32::from(pos.result() as u8) / 2.0;
-                                results_chunk[i] = blend * result + (1. - blend) * score;
+                            match wdl {
+                                TargetType::Value => {
+                                    let score = 1.0 / (1.0 + (-rscale * f32::from(pos.score())).exp());
+                                    let result = f32::from(pos.result() as u8) / 2.0;
+                                    results_chunk[i] = blend * result + (1.0 - blend) * score;
+                                },
+                                TargetType::WDL => {
+                                    results_chunk[output_size * i + usize::from(pos.result() as u8)] = 1.0;
+                                },
+                                TargetType::ValueAndWDL => {
+                                    let score = 1.0 / (1.0 + (-rscale * f32::from(pos.score())).exp());
+                                    let result = f32::from(pos.result() as u8) / 2.0;
+                                    results_chunk[output_size * i] = blend * result + (1.0 - blend) * score;
+                                    results_chunk[output_size * i + usize::from(pos.result() as u8) + 1] = 1.0;
+                                },
                             }
                         }
                     });
