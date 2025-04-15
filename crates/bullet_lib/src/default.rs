@@ -134,7 +134,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
             1 => TargetType::Value,
             3 => TargetType::WDL,
             4 => TargetType::ValueAndWDL,
-            x => panic!("Only supports 1, 3, or 4 outputs, got {x}!")
+            x => panic!("Only supports 1, 3, or 4 outputs, got {x}!"),
         };
 
         if inputs.len() != expected {
@@ -203,6 +203,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
                 (win + draw / 2.0) / (win + draw + loss)
             }
             [score] => *score,
+            [score, _loss, _draw, _win] => *score,
             _ => panic!("Invalid output size!"),
         }
     }
