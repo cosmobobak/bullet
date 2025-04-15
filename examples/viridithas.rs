@@ -136,12 +136,12 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let value_target = targets.slice_rows(0, 1);
     let wdl_target = targets.slice_rows(1, 4);
 
-    value.squared_error(value_target);
-    wdl.softmax_crossentropy_loss(wdl_target);
+    let value_loss = value.squared_error(value_target);
+    let wdl_loss = wdl.softmax_crossentropy_loss(wdl_target);
 
     // graph, output node
     // recombine outputs
-    let out = value.concat(wdl);
+    let out = value_loss + 0.1 * wdl_loss;
     let output_node = out.node();
     (builder.build(ExecutionContext::default()), output_node)
 }
