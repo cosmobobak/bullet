@@ -138,6 +138,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
             x => panic!("Only supports 1, 3, or 4 outputs, got {x}!"),
         };
         dbg!(wdl);
+        let wdl = TargetType::ValueAndWDL;
 
         if inputs.len() != expected {
             println!("WARNING: The network graph contains an unexpected number of inputs!")
