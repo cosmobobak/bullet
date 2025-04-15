@@ -116,7 +116,7 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
-    let l2 = builder.new_affine("l2", L2, output_buckets * L3);
+    let l2 = builder.new_affine("l2", L2 * 2, output_buckets * L3);
     let l3 = builder.new_affine("l3", L3, output_buckets);
 
     // 32 + 32 due to feature factoriser
@@ -126,7 +126,9 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let stm_subnet = l0.forward(stm).crelu().pairwise_mul();
     let ntm_subnet = l0.forward(nstm).crelu().pairwise_mul();
     let out = stm_subnet.concat(ntm_subnet);
-    let out = l1.forward(out).select(buckets).screlu();
+    let out = l1.forward(out).select(buckets);
+    let with_squares = out.concat(out.abs_pow(2.0));
+    let out = with_squares.crelu();
     let out = l2.forward(out).select(buckets).screlu();
     let out = l3.forward(out).select(buckets);
 
