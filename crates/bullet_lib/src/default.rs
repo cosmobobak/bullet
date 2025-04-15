@@ -160,7 +160,7 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
         <Self as NetworkTrainer>::save_to_checkpoint(self, path);
     }
 
-    pub fn eval_raw_output(&mut self, fen: &str) -> Vec<f32>
+    pub fn eval_raw_output_for_node(&mut self, fen: &str, node: Node) -> Vec<f32>
     where
         Inp::RequiredDataType: std::str::FromStr<Err = String> + LoadableDataType,
     {
@@ -179,12 +179,19 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
         self.load_batch(&prepared);
         self.optimiser.graph.forward().unwrap();
 
-        let eval = self.optimiser.graph.get_node(self.output_node);
+        let eval = self.optimiser.graph.get_node(node);
 
         let dense_vals = eval.values.dense().unwrap();
         let mut vals = vec![0.0; dense_vals.size()];
         dense_vals.write_to_slice(&mut vals).unwrap();
         vals
+    }
+
+    pub fn eval_raw_output(&mut self, fen: &str) -> Vec<f32>
+    where
+        Inp::RequiredDataType: std::str::FromStr<Err = String> + LoadableDataType,
+    {
+        self.eval_raw_output_for_node(fen, self.output_node)
     }
 
     pub fn eval(&mut self, fen: &str) -> f32

@@ -34,11 +34,11 @@ fn main() {
     let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
-    let (graph, output_node) = build_network(num_inputs, max_active, num_buckets, HL);
+    let (graph, output_loss_node, outputs_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
-        output_node,
+        output_loss_node,
         AdamWParams::default(),
         inputs,
         output_buckets,
@@ -100,11 +100,21 @@ fn main() {
 
     trainer.run(&schedule, &settings, &data_loader);
 
-    let eval = 400.0 * trainer.eval("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 | 0 | 0.0");
-    println!("Eval: {eval:.3}cp");
+    for fen in [
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    ] {
+        let eval = trainer.eval_raw_output_for_node(fen, outputs_node);
+        println!("FEN: {fen}");
+        println!("EVAL: {}", 400.0 * eval[0]);
+        println!("WDL: {:.3} {:.3} {:.3}", eval[3], eval[2], eval[1]);
+    }
 }
 
-fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node) {
+fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node, Node) {
     let builder = NetworkBuilder::default();
 
     // inputs
@@ -141,7 +151,8 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     // graph, output node
     // recombine outputs
-    let out = value_loss + 0.1 * wdl_loss;
-    let output_node = out.node();
-    (builder.build(ExecutionContext::default()), output_node)
+    let loss_sum = value_loss + 0.1 * wdl_loss;
+    let output_loss_node = loss_sum.node();
+    let out_node = out.node();
+    (builder.build(ExecutionContext::default()), output_loss_node, out_node)
 }
