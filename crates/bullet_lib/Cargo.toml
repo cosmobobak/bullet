@@ -43,14 +43,6 @@ name = "viridithas"
 path = "../../examples/viridithas.rs"
 
 [[example]]
-name = "alexandria"
-path = "../../examples/alexandria.rs"
-
-[[example]]
-name = "demo"
-path = "../../examples/demo.rs"
-
-[[example]]
 name = "morelayers"
 path = "../../examples/morelayers.rs"
 
