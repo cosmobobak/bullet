@@ -149,7 +149,6 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let value_loss = value.squared_error(value_target);
     let wdl_loss = wdl.softmax_crossentropy_loss(wdl_target);
 
-    // graph, output node
     // recombine outputs
     let loss_sum = value_loss + 0.1 * wdl_loss;
     let output_loss_node = loss_sum.node();
