@@ -130,12 +130,14 @@ impl<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out: OutputBuc
         assert_eq!(output_shape.cols(), 1, "Output cannot have >1 column!");
 
         let rows = output_shape.rows();
+        dbg!(rows);
         let wdl = match rows {
             1 => TargetType::Value,
             3 => TargetType::WDL,
             4 => TargetType::ValueAndWDL,
             x => panic!("Only supports 1, 3, or 4 outputs, got {x}!"),
         };
+        dbg!(wdl);
 
         if inputs.len() != expected {
             println!("WARNING: The network graph contains an unexpected number of inputs!")

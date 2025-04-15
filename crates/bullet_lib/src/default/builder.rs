@@ -388,7 +388,6 @@ impl<T: SparseInputType, U: OutputBuckets<T::RequiredDataType>, O: OptimiserType
 
         let output_node = out.node();
         let output_size = prev_size;
-        dbg!(output_size);
         let targets = builder.new_dense_input("targets", Shape::new(output_size, 1));
         match self.loss {
             Loss::None => panic!("No loss function specified!"),

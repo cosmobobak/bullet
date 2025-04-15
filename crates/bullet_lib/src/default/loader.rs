@@ -125,7 +125,7 @@ pub struct DefaultDataPreparer<I, O> {
     pub(crate) targets: DenseInput,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetType {
     Value,
     WDL,
