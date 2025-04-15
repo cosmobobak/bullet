@@ -432,6 +432,8 @@ impl<T: SparseInputType, U: OutputBuckets<T::RequiredDataType>, O: OptimiserType
             graph.profile_node(node, "Profile");
         }
 
+        dbg!(output_size);
+
         let trainer = Trainer {
             optimiser: Optimiser::new(graph, Default::default()).unwrap(),
             input_getter: input_getter.clone(),
