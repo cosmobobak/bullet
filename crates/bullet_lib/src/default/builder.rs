@@ -388,6 +388,7 @@ impl<T: SparseInputType, U: OutputBuckets<T::RequiredDataType>, O: OptimiserType
 
         let output_node = out.node();
         let output_size = prev_size;
+        dbg!(output_size);
         let targets = builder.new_dense_input("targets", Shape::new(output_size, 1));
         match self.loss {
             Loss::None => panic!("No loss function specified!"),
@@ -431,8 +432,6 @@ impl<T: SparseInputType, U: OutputBuckets<T::RequiredDataType>, O: OptimiserType
         if let Some(node) = profile_node {
             graph.profile_node(node, "Profile");
         }
-
-        dbg!(output_size);
 
         let trainer = Trainer {
             optimiser: Optimiser::new(graph, Default::default()).unwrap(),
