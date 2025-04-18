@@ -120,14 +120,14 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     // inputs
     let stm = builder.new_sparse_input("stm", Shape::new(num_inputs, 1), max_active);
     let nstm = builder.new_sparse_input("nstm", Shape::new(num_inputs, 1), max_active);
-    let targets = builder.new_dense_input("targets", Shape::new(4, 1));
+    let targets = builder.new_dense_input("targets", Shape::new(1, 1));
     let buckets = builder.new_sparse_input("buckets", Shape::new(output_buckets, 1), 1);
 
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
-    let l3 = builder.new_affine("l3", L3, output_buckets * 4);
+    let l3 = builder.new_affine("l3", L3, output_buckets * 2);
 
     // 32 + 32 due to feature factoriser
     l0.init_with_effective_input_size(64);
@@ -140,14 +140,12 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let out = l2.forward(out).select(buckets).screlu();
     let out = l3.forward(out).select(buckets);
 
-    let value = out.slice_rows(0, 1).sigmoid();
-    let wdl = out.slice_rows(1, 4);
+    let mean = out.slice_rows(0, 1).sigmoid();
+    let variance = out.slice_rows(1, 4);
 
-    let value_target = targets.slice_rows(0, 1);
-    let wdl_target = targets.slice_rows(1, 4);
-
-    let value_loss = value.squared_error(value_target);
-    let wdl_loss = wdl.softmax_crossentropy_loss(wdl_target);
+    let mean_loss = mean.squared_error(targets);
+    let mean_loss_detached = todo!();
+    
 
     // recombine outputs
     let loss_sum = value_loss + 0.1 * wdl_loss;
