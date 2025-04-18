@@ -110,7 +110,7 @@ fn main() {
         let eval = trainer.eval_raw_output_for_node(fen, outputs_node);
         println!("FEN: {fen}");
         println!("EVAL: {}", 400.0 * eval[0]);
-        println!("WDL: {:.3} {:.3} {:.3}", eval[3], eval[2], eval[1]);
+        println!("VAR: {}", 400.0 * eval[1]);
     }
 }
 
@@ -141,14 +141,20 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let out = l3.forward(out).select(buckets);
 
     let mean = out.slice_rows(0, 1).sigmoid();
-    let variance = out.slice_rows(1, 4);
+    let variance = out.slice_rows(1, 2).sigmoid();
 
     let mean_loss = mean.squared_error(targets);
-    let mean_loss_detached = todo!();
-    
+    // mean loss is at most 1.0 (if net predicts x and actual is 1 - x)
+    // with a sane net it's really at most 0.25 (as guessing 0.5 guarantees this)
+    // as such, we scale and clip the loss to make it nice and learnable.
+    // losses of 0.25 or more become 1.0, and e.g. a loss of 0.05 becomes 0.2.
+    // this means that the pre-sigmoid units of the variance head are not raw
+    // 400-ths of a centipawn like the mean head. not sure how to work this backwards.
+    let scaled_loss = (mean_loss.copy_stop_grad() * 4.0).crelu();
+    let variance_loss = variance.squared_error(scaled_loss);
 
     // recombine outputs
-    let loss_sum = value_loss + 0.1 * wdl_loss;
+    let loss_sum = mean_loss + 0.1 * variance_loss;
     let output_loss_node = loss_sum.node();
     let out_node = out.node();
     (builder.build(ExecutionContext::default()), output_loss_node, out_node)
