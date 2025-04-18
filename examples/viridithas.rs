@@ -34,11 +34,11 @@ fn main() {
     let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
-    let (graph, output_loss_node, outputs_node) = build_network(num_inputs, max_active, num_buckets, HL);
+    let (graph, loss_node, output_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
-        output_loss_node,
+        loss_node,
         AdamWParams::default(),
         inputs,
         output_buckets,
@@ -107,7 +107,7 @@ fn main() {
         "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
     ] {
-        let eval = trainer.eval_raw_output_for_node(fen, outputs_node);
+        let eval = trainer.eval_raw_output_for_node(fen, output_node);
         println!("FEN: {fen}");
         println!("EVAL: {}", 400.0 * eval[0]);
         println!("VAR: {}", 400.0 * eval[1]);
@@ -138,10 +138,10 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let out = stm_subnet.concat(ntm_subnet);
     let out = l1.forward(out).select(buckets).screlu();
     let out = l2.forward(out).select(buckets).screlu();
-    let out = l3.forward(out).select(buckets);
+    let out = l3.forward(out).select(buckets).sigmoid();
 
-    let mean = out.slice_rows(0, 1).sigmoid();
-    let variance = out.slice_rows(1, 2).sigmoid();
+    let mean = out.slice_rows(0, 1);
+    let variance = out.slice_rows(1, 2);
 
     let mean_loss = mean.squared_error(targets);
     // mean loss is at most 1.0 (if net predicts x and actual is 1 - x)
