@@ -34,11 +34,11 @@ fn main() {
     let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
-    let (graph, output_loss_node, outputs_node) = build_network(num_inputs, max_active, num_buckets, HL);
+    let (graph, output_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
-        output_loss_node,
+        output_node,
         AdamWParams::default(),
         inputs,
         output_buckets,
@@ -107,27 +107,26 @@ fn main() {
         "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
     ] {
-        let eval = trainer.eval_raw_output_for_node(fen, outputs_node);
+        let eval = trainer.eval_raw_output_for_node(fen, output_node);
         println!("FEN: {fen}");
         println!("EVAL: {}", 400.0 * eval[0]);
-        println!("WDL: {:.3} {:.3} {:.3}", eval[3], eval[2], eval[1]);
     }
 }
 
-fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node, Node) {
+fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node) {
     let builder = NetworkBuilder::default();
 
     // inputs
     let stm = builder.new_sparse_input("stm", Shape::new(num_inputs, 1), max_active);
     let nstm = builder.new_sparse_input("nstm", Shape::new(num_inputs, 1), max_active);
-    let targets = builder.new_dense_input("targets", Shape::new(4, 1));
+    let targets = builder.new_dense_input("targets", Shape::new(1, 1));
     let buckets = builder.new_sparse_input("buckets", Shape::new(output_buckets, 1), 1);
 
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
     let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2 = builder.new_affine("l2", L2, output_buckets * L3);
-    let l3 = builder.new_affine("l3", L3, output_buckets * 4);
+    let l3 = builder.new_affine("l3", L3, output_buckets);
 
     // 32 + 32 due to feature factoriser
     l0.init_with_effective_input_size(64);
@@ -138,20 +137,10 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let out = stm_subnet.concat(ntm_subnet);
     let out = l1.forward(out).select(buckets).screlu();
     let out = l2.forward(out).select(buckets).screlu();
-    let out = l3.forward(out).select(buckets);
+    let out = l3.forward(out).select(buckets).sigmoid();
 
-    let value = out.slice_rows(0, 1).sigmoid();
-    let wdl = out.slice_rows(1, 4);
+    out.squared_error(targets);
 
-    let value_target = targets.slice_rows(0, 1);
-    let wdl_target = targets.slice_rows(1, 4);
-
-    let value_loss = value.squared_error(value_target);
-    let wdl_loss = wdl.softmax_crossentropy_loss(wdl_target);
-
-    // recombine outputs
-    let loss_sum = value_loss + 0.1 * wdl_loss;
-    let output_loss_node = loss_sum.node();
     let out_node = out.node();
-    (builder.build(ExecutionContext::default()), output_loss_node, out_node)
+    (builder.build(ExecutionContext::default()), out_node)
 }
