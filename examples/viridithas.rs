@@ -1,8 +1,17 @@
 use bullet_lib::{
-    default::inputs::ChessBucketsMirroredFactorised, game::outputs::MaterialCount, nn::{
+    default::inputs::ChessBucketsMirroredFactorised,
+    game::outputs::MaterialCount,
+    nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         ExecutionContext, Graph, NetworkBuilder, Node, Shape,
-    }, trainer::{default::{inputs, loader, outputs, Trainer}, save::{Layout, QuantTarget, SavedFormat}, schedule::{lr, wdl, TrainingSchedule, TrainingSteps}, settings::LocalSettings, NetworkTrainer}
+    },
+    trainer::{
+        default::{inputs, loader, outputs, Trainer},
+        save::SavedFormat,
+        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
+        settings::LocalSettings,
+        NetworkTrainer,
+    },
 };
 use bulletformat::ChessBoard;
 
@@ -42,22 +51,9 @@ fn main() {
         AdamWParams::default(),
         inputs,
         output_buckets,
-        vec![
-            SavedFormat::new("l0w", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l0b", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l1xw", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l1fw", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l1xb", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l1fb", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l2xw", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l2fw", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l2xb", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l2fb", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l3xw", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l3fw", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l3xb", QuantTarget::Float, Layout::Normal),
-            SavedFormat::new("l3fb", QuantTarget::Float, Layout::Normal),
-        ],
+        ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+            .map(SavedFormat::id)
+            .to_vec(),
         false,
     );
 
