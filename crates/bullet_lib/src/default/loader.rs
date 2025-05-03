@@ -213,16 +213,16 @@ impl<I: SparseInputType, O: OutputBuckets<I::RequiredDataType>> DefaultDataPrepa
                                     let score = 1.0 / (1.0 + (-rscale * f32::from(pos.score())).exp());
                                     let result = f32::from(pos.result() as u8) / 2.0;
                                     results_chunk[i] = blend * result + (1.0 - blend) * score;
-                                },
+                                }
                                 TargetType::WDL => {
                                     results_chunk[output_size * i + usize::from(pos.result() as u8)] = 1.0;
-                                },
+                                }
                                 TargetType::ValueAndWDL => {
                                     let score = 1.0 / (1.0 + (-rscale * f32::from(pos.score())).exp());
                                     let result = f32::from(pos.result() as u8) / 2.0;
                                     results_chunk[output_size * i] = blend * result + (1.0 - blend) * score;
                                     results_chunk[output_size * i + usize::from(pos.result() as u8) + 1] = 1.0;
-                                },
+                                }
                             }
                         }
                     });
