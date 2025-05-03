@@ -96,7 +96,21 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    let data_loader = loader::ViriBinpackLoader::new(
+        "data/packs.viriformat",
+        512,
+        4,
+        viriformat::dataformat::Filter {
+            min_ply: 16,
+            min_pieces: 4,
+            max_eval: 31339,
+            filter_tactical: true,
+            filter_check: true,
+            filter_castling: false,
+            max_eval_incorrectness: u32::MAX,
+        },
+    );
 
     trainer.run(&schedule, &settings, &data_loader);
 
