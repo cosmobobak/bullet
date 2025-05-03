@@ -76,7 +76,7 @@ fn main() {
     if FINE_TUNING {
         initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
-        sbs = 200;
+        sbs = 50;
     } else {
         initial_lr = 0.001;
         final_lr = 0.001 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
@@ -84,7 +84,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "synthesis".into(),
+        net_id: "delenda-clip1".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -102,7 +102,21 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    let data_loader = loader::ViriBinpackLoader::new(
+        "data/packs.viriformat",
+        512,
+        4,
+        viriformat::dataformat::Filter {
+            min_ply: 16,
+            min_pieces: 4,
+            max_eval: 31339,
+            filter_tactical: true,
+            filter_check: true,
+            filter_castling: false,
+            max_eval_incorrectness: u32::MAX,
+        },
+    );
 
     trainer.run(&schedule, &settings, &data_loader);
 
@@ -160,27 +174,44 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let value_loss = l3_out.squared_error(targets);
 
     // clipping loss
-    let l1f_weights = l1f.weights;
-    let x2 = l1f_weights.concat(l1f_weights);
-    let x4 = x2.concat(x2);
-    let l1f_weights_multiplexed = x4.concat(x4);
-    let l1_weights_summed = l1f_weights_multiplexed + l1x.weights;
-    let l1_weights_overflows = 0.01 * (l1_weights_summed.abs_pow(1.0) - 1.98).relu();
-    let l1_weights_loss = l1_weights_overflows.squared_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu());
+    // let l1f_weights = l1f.weights;
+    // let x2 = l1f_weights.concat(l1f_weights);
+    // let x4 = x2.concat(x2);
+    // let l1f_weights_multiplexed = x4.concat(x4);
+    // let l1_weights_summed = l1f_weights_multiplexed + l1x.weights;
+    // let l1_weights_overflows = (l1_weights_summed.abs_pow(1.0) - 1.97).relu();
+    // let l1_weights_loss = 0.01 * l1_weights_overflows.power_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu(), 1.0);
 
-    let l1f_biases = l1f.bias;
-    let x2 = l1f_biases.concat(l1f_biases);
-    let x4 = x2.concat(x2);
-    let l1f_biases_multiplexed = x4.concat(x4);
-    let l1_biases_summed = l1f_biases_multiplexed + l1x.bias;
-    let l1_biases_overflows = 0.01 * (l1_biases_summed.abs_pow(1.0) - 1.98).relu();
-    let l1_biases_loss = l1_biases_overflows.squared_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu());
+    // let l1f_biases = l1f.bias;
+    // let x2 = l1f_biases.concat(l1f_biases);
+    // let x4 = x2.concat(x2);
+    // let l1f_biases_multiplexed = x4.concat(x4);
+    // let l1_biases_summed = l1f_biases_multiplexed + l1x.bias;
+    // let l1_biases_overflows = (l1_biases_summed.abs_pow(1.0) - 1.97).relu();
+    // let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
 
-    let l1_loss = l1_weights_loss + l1_biases_loss;
+    // goal is to ensure that each (factoriser_weight, bucket_weight) pair is in the range [-1.97, 1.97]
+    // this can't be done by directly clipping the weights, as we want to distribute across the factoriser.
+    // the above commented code doesn't work, because the shape of the layers makes the .concat operation
+    // not work as expected. instead, we need to apply the pair of layers to an input of all ones, and apply
+    // ReLU loss to the output vector.
+    // let l1x_weights = l1x.weights.select(buckets);
+    // let l1f_weights = l1f.weights;
+    // let l1_weights = l1x_weights + l1f_weights;
+    // let l1_weights_overflows = (l1_weights.abs_pow(1.0) - 1.97).relu();
+    // let l1_weights_loss = 0.01 * l1_weights_overflows.power_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu(), 1.0);
+
+    // let l1x_biases = l1x.bias.select(buckets);
+    // let l1f_biases = l1f.bias;
+    // let l1_biases = l1x_biases + l1f_biases;
+    // let l1_biases_overflows = (l1_biases.abs_pow(1.0) - 1.97).relu();
+    // let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
+
+    // let l1_loss = l1_weights_loss + l1_biases_loss;
 
     let value_node = l3_out.node();
 
-    let loss = value_loss + l1_loss;
+    let loss = value_loss;// + l1_loss;
 
     let out_node = loss.node();
 
