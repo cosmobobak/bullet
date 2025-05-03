@@ -10,7 +10,7 @@ const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = false;
+const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCount<8>;
@@ -62,7 +62,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
-    // trainer.load_from_checkpoint("checkpoints/kolibri-800");
+    trainer.load_from_checkpoint("checkpoints/falke-200");
 
     let initial_lr;
     let final_lr;
@@ -70,7 +70,7 @@ fn main() {
     if FINE_TUNING {
         initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
-        sbs = 200;
+        sbs = 50;
     } else {
         initial_lr = 0.001;
         final_lr = 0.001 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
