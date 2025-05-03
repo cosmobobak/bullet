@@ -62,7 +62,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
-    trainer.load_from_checkpoint("checkpoints/falke-200");
+    trainer.load_from_checkpoint("checkpoints/wavefront-2-50");
 
     let initial_lr;
     let final_lr;
@@ -78,7 +78,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "wavefront".into(),
+        net_id: "wavefront-2".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -96,7 +96,7 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset-25k.bin"]);
     let data_loader = loader::ViriBinpackLoader::new(
         "data/packs.viriformat",
         512,
@@ -112,7 +112,7 @@ fn main() {
         },
     );
 
-    trainer.run(&schedule, &settings, &data_loader);
+    // trainer.run(&schedule, &settings, &data_loader);
 
     for fen in [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -152,7 +152,7 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let out = stm_subnet.concat(ntm_subnet);
     let out = l1.forward(out).select(buckets).screlu();
     let out = l2.forward(out).select(buckets).screlu();
-    let out = l3.forward(out).select(buckets);
+    let out = l3.forward(out).select(buckets).sigmoid();
 
     let value_loss = out.squared_error(targets);
 
