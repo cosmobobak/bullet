@@ -112,7 +112,7 @@ fn main() {
         },
     );
 
-    // trainer.run(&schedule, &settings, &data_loader);
+    trainer.run(&schedule, &settings, &data_loader);
 
     for fen in [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
