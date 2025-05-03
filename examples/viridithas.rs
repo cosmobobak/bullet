@@ -2,7 +2,8 @@ use bullet_lib::{
     default::inputs::ChessBucketsMirroredFactorised,
     game::outputs::MaterialCount,
     nn::{
-        optimiser::{AdamWOptimiser, AdamWParams}, ExecutionContext, Graph, NetworkBuilder, NetworkBuilderNode, Node, Shape
+        optimiser::{AdamWOptimiser, AdamWParams},
+        ExecutionContext, Graph, NetworkBuilder, Node, Shape,
     },
     trainer::{
         default::{inputs, loader, outputs, Trainer},
@@ -12,14 +13,13 @@ use bullet_lib::{
         NetworkTrainer,
     },
 };
-use bullet_core::graph::builder::GraphBuilderNode;
 use bulletformat::ChessBoard;
 
 const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = false;
+const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCount<8>;
@@ -68,7 +68,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    // trainer.load_from_checkpoint("checkpoints/kolibri-800");
+    trainer.load_from_checkpoint("checkpoints/delenda-800");
 
     let initial_lr;
     let final_lr;
@@ -161,20 +161,20 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     // clipping loss
     let l1f_weights = l1f.weights;
-    let x2 = GraphBuilderNode::concat(l1f_weights, l1f_weights);
-    let x4 = GraphBuilderNode::concat(x2, x2);
-    let l1f_weights_multiplexed = GraphBuilderNode::concat(x4, x4);
+    let x2 = l1f_weights.concat(l1f_weights);
+    let x4 = x2.concat(x2);
+    let l1f_weights_multiplexed = x4.concat(x4);
     let l1_weights_summed = l1f_weights_multiplexed + l1x.weights;
     let l1_weights_overflows = 0.01 * (l1_weights_summed.abs_pow(1.0) - 1.98).relu();
-    let l1_weights_loss = l1_weights_overflows.squared_error((0.0-l1_weights_overflows.copy_stop_grad()).relu());
-    
+    let l1_weights_loss = l1_weights_overflows.squared_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu());
+
     let l1f_biases = l1f.bias;
-    let x2 = GraphBuilderNode::concat(l1f_biases, l1f_biases);
-    let x4 = GraphBuilderNode::concat(x2, x2);
-    let l1f_biases_multiplexed = GraphBuilderNode::concat(x4, x4);
+    let x2 = l1f_biases.concat(l1f_biases);
+    let x4 = x2.concat(x2);
+    let l1f_biases_multiplexed = x4.concat(x4);
     let l1_biases_summed = l1f_biases_multiplexed + l1x.bias;
     let l1_biases_overflows = 0.01 * (l1_biases_summed.abs_pow(1.0) - 1.98).relu();
-    let l1_biases_loss = l1_biases_overflows.squared_error((0.0-l1_biases_overflows.copy_stop_grad()).relu());
+    let l1_biases_loss = l1_biases_overflows.squared_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu());
 
     let l1_loss = l1_weights_loss + l1_biases_loss;
 
