@@ -10,7 +10,7 @@ use bullet_lib::{
         load_into_graph,
         loader::DefaultDataPreparer,
         outputs,
-    },
+    }, value::loader::TargetType,
 };
 use bulletformat::BulletFormat;
 use std::{fs::File, io::BufWriter, time::Instant};
@@ -43,7 +43,7 @@ fn main() {
         let loader = DataLoader::new(DATA_PATH, 128).unwrap();
 
         loader.map_batches(batch_size, |batch: &[ChessBoard]| {
-            let prepared = DefaultDataPreparer::prepare(inputs, output_buckets, false, batch, 4, 0.0, eval_scale);
+            let prepared = DefaultDataPreparer::prepare(inputs, output_buckets, TargetType::Value, batch, 4, 0.0, eval_scale);
             sender.send((batch.to_vec(), prepared)).unwrap();
         });
 
