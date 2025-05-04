@@ -33,7 +33,8 @@ impl InterleaveOptions {
             let count = file.metadata()?.len();
 
             if count > 0 {
-                streams.push((count, BufReader::new(file)));
+                let fname = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "<unknown>".into());
+                streams.push((count, BufReader::new(file), fname));
                 total += count;
             }
         }
@@ -55,8 +56,9 @@ impl InterleaveOptions {
                 idx += 1;
             }
 
-            let (count, reader) = &mut streams[idx];
+            let (count, reader, _) = &mut streams[idx];
 
+            buffer.clear();
             Game::deserialise_fast_into_buffer(reader, &mut buffer)?;
             writer.write_all(&buffer)?;
             games += 1;
@@ -66,6 +68,7 @@ impl InterleaveOptions {
             remaining -= size;
             *count -= size;
             if *count == 0 {
+                println!("Finished reading {}", streams[idx].2);
                 streams.swap_remove(idx);
             }
 
