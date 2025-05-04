@@ -43,6 +43,10 @@ name = "viridithas"
 path = "../../examples/viridithas.rs"
 
 [[example]]
+name = "halogen"
+path = "../../examples/halogen.rs"
+
+[[example]]
 name = "morelayers"
 path = "../../examples/morelayers.rs"
 
