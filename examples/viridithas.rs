@@ -76,7 +76,7 @@ fn main() {
     if FINE_TUNING {
         initial_lr = 0.0005;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
-        sbs = 50;
+        sbs = 200;
     } else {
         initial_lr = 0.001;
         final_lr = 0.001 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
