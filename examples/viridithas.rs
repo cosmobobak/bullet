@@ -68,7 +68,7 @@ fn main() {
     let final_lr;
     let sbs;
     if FINE_TUNING {
-        initial_lr = 0.0005;
+        initial_lr = 0.0005 * 0.3 * 0.3 * 0.3;
         final_lr = 0.0005 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3 * 0.3;
         sbs = 50;
     } else {
@@ -78,7 +78,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "wavefront-2".into(),
+        net_id: "wavefront".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -98,7 +98,7 @@ fn main() {
 
     // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset-25k.bin"]);
     let data_loader = loader::ViriBinpackLoader::new(
-        "data/packs.viriformat",
+        "data/dataset.viriformat",
         512,
         4,
         viriformat::dataformat::Filter {
