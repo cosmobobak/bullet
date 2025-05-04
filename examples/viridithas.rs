@@ -174,21 +174,21 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let value_loss = l3_out.squared_error(targets);
 
     // clipping loss
-    // let l1f_weights = l1f.weights;
-    // let x2 = l1f_weights.concat(l1f_weights);
-    // let x4 = x2.concat(x2);
-    // let l1f_weights_multiplexed = x4.concat(x4);
-    // let l1_weights_summed = l1f_weights_multiplexed + l1x.weights;
-    // let l1_weights_overflows = (l1_weights_summed.abs_pow(1.0) - 1.97).relu();
-    // let l1_weights_loss = 0.01 * l1_weights_overflows.power_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu(), 1.0);
+    let l1f_weights = l1f.weights;
+    let x2 = l1f_weights.concat(l1f_weights.copy());
+    let x4 = x2.concat(x2.copy());
+    let l1f_weights_multiplexed = x4.concat(x4.copy());
+    let l1_weights_summed = l1f_weights_multiplexed + l1x.weights;
+    let l1_weights_overflows = (l1_weights_summed.abs_pow(1.0) - 1.97).relu();
+    let l1_weights_loss = 0.01 * l1_weights_overflows.power_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu(), 1.0);
 
-    // let l1f_biases = l1f.bias;
-    // let x2 = l1f_biases.concat(l1f_biases);
-    // let x4 = x2.concat(x2);
-    // let l1f_biases_multiplexed = x4.concat(x4);
-    // let l1_biases_summed = l1f_biases_multiplexed + l1x.bias;
-    // let l1_biases_overflows = (l1_biases_summed.abs_pow(1.0) - 1.97).relu();
-    // let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
+    let l1f_biases = l1f.bias;
+    let x2 = l1f_biases.concat(l1f_biases.copy());
+    let x4 = x2.concat(x2.copy());
+    let l1f_biases_multiplexed = x4.concat(x4.copy());
+    let l1_biases_summed = l1f_biases_multiplexed + l1x.bias;
+    let l1_biases_overflows = (l1_biases_summed.abs_pow(1.0) - 1.97).relu();
+    let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
 
     // goal is to ensure that each (factoriser_weight, bucket_weight) pair is in the range [-1.97, 1.97]
     // this can't be done by directly clipping the weights, as we want to distribute across the factoriser.
@@ -207,11 +207,11 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     // let l1_biases_overflows = (l1_biases.abs_pow(1.0) - 1.97).relu();
     // let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
 
-    // let l1_loss = l1_weights_loss + l1_biases_loss;
+    let l1_loss = l1_weights_loss + l1_biases_loss;
 
     let value_node = l3_out.node();
 
-    let loss = value_loss;// + l1_loss;
+    let loss = value_loss.reduce_sum_across_batch() + l1_loss;
 
     let out_node = loss.node();
 
