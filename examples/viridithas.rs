@@ -84,7 +84,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "delenda-clip1".into(),
+        net_id: "scorpio".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
