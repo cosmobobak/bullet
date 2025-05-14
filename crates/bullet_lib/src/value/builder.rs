@@ -6,11 +6,7 @@ use bullet_core::{
 };
 
 use crate::{
-    default::{AdditionalTrainerInputs, Wgt},
-    game::{inputs::SparseInputType, outputs::OutputBuckets},
-    nn::{optimiser::OptimiserType, NetworkBuilder, NetworkBuilderNode},
-    trainer::save::SavedFormat,
-    ExecutionContext,
+    default::{AdditionalTrainerInputs, Wgt}, game::{inputs::SparseInputType, outputs::OutputBuckets}, nn::{optimiser::OptimiserType, NetworkBuilder, NetworkBuilderNode}, trainer::save::SavedFormat, value::loader::TargetType, ExecutionContext
 };
 
 use super::{loader::B, ValueTrainer};
@@ -152,7 +148,12 @@ where
             blend_getter: self.blend_getter,
             weight_getter: self.weight_getter,
             output_node,
-            additional_inputs: AdditionalTrainerInputs { wdl: output_size == 3 },
+            additional_inputs: AdditionalTrainerInputs { wdl: match output_size {
+                1 => TargetType::Value,
+                3 => TargetType::WDL,
+                4 => TargetType::ValueAndWDL,
+                _ => panic!("Invalid output size!"),
+            } },
             saved_format: saved_format.clone(),
             factorised_weights: (!self.factorised.is_empty()).then_some(self.factorised),
         }
