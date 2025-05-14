@@ -104,7 +104,7 @@ fn main() {
 
     // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
     let data_loader = loader::ViriBinpackLoader::new(
-        "data/dataset.viriformat",
+        "data/dataset2.viriformat",
         512,
         4,
         viriformat::dataformat::Filter {
