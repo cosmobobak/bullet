@@ -237,17 +237,21 @@ where
 
                                 match wdl {
                                     TargetType::Value => {
-                                        let score = 1.0 / (1.0 + (-rscale * f32::from(pos.score())).exp());
+                                        let score = 1. / (1. + (-rscale * f32::from(pos.score())).exp());
                                         let result = f32::from(pos.result() as u8) / 2.0;
-                                        results_chunk[i] = blend * result + (1.0 - blend) * score;
+                                        let blend = blend_getter(pos, blend);
+                                        assert!((0.0..=1.0).contains(&blend), "WDL proportion must be in [0, 1]");
+                                        results_chunk[i] = blend * result + (1. - blend) * score;
                                     }
                                     TargetType::WDL => {
                                         results_chunk[output_size * i + usize::from(pos.result() as u8)] = 1.0;
                                     }
                                     TargetType::ValueAndWDL => {
-                                        let score = 1.0 / (1.0 + (-rscale * f32::from(pos.score())).exp());
+                                        let score = 1. / (1. + (-rscale * f32::from(pos.score())).exp());
                                         let result = f32::from(pos.result() as u8) / 2.0;
-                                        results_chunk[output_size * i] = blend * result + (1.0 - blend) * score;
+                                        let blend = blend_getter(pos, blend);
+                                        assert!((0.0..=1.0).contains(&blend), "WDL proportion must be in [0, 1]");
+                                        results_chunk[output_size * i] = blend * result + (1. - blend) * score;
                                         results_chunk[output_size * i + usize::from(pos.result() as u8) + 1] = 1.0;
                                     }
                                 }
