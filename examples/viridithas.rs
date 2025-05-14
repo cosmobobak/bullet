@@ -19,7 +19,7 @@ const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = true;
+const FINE_TUNING: bool = false;
 
 type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCount<8>;
@@ -68,7 +68,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    trainer.load_from_checkpoint("checkpoints/delenda-800");
+    // trainer.load_from_checkpoint("checkpoints/falke-200");
 
     let initial_lr;
     let final_lr;
@@ -92,7 +92,7 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+        wdl_scheduler: wdl::LinearWDL { start: 0.4, end: 0.6 },
         lr_scheduler: lr::Warmup {
             inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 800,
