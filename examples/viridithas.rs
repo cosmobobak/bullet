@@ -68,7 +68,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    // trainer.load_from_checkpoint("checkpoints/falke-200");
+    // trainer.load_from_checkpoint("checkpoints/scorpio-200");
 
     let initial_lr;
     let final_lr;
@@ -144,7 +144,7 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
-    let l1 = builder.new_affine("l1x", hl, output_buckets * L2);
+    let l1 = builder.new_affine("l1", hl, output_buckets * L2);
     let l2x = builder.new_affine("l2x", L2, output_buckets * L3);
     let l2f = builder.new_affine("l2f", L2, L3);
     let l3x = builder.new_affine("l3x", L3, output_buckets);
