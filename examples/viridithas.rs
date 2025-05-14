@@ -43,11 +43,11 @@ fn main() {
     let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
-    let (graph, loss_node, value_node) = build_network(num_inputs, max_active, num_buckets, HL);
+    let (graph, value_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
-        loss_node,
+        value_node,
         AdamWParams::default(),
         inputs,
         output_buckets,
@@ -133,7 +133,7 @@ fn main() {
     }
 }
 
-fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node, Node) {
+fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl: usize) -> (Graph, Node) {
     let builder = NetworkBuilder::default();
 
     // inputs
@@ -144,8 +144,7 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
-    let l1x = builder.new_affine("l1x", hl, output_buckets * L2);
-    let l1f = builder.new_affine("l1f", hl, L2);
+    let l1 = builder.new_affine("l1x", hl, output_buckets * L2);
     let l2x = builder.new_affine("l2x", L2, output_buckets * L3);
     let l2f = builder.new_affine("l2f", L2, L3);
     let l3x = builder.new_affine("l3x", L3, output_buckets);
@@ -159,9 +158,7 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let ntm_subnet = l0.forward(nstm).crelu().pairwise_mul();
     let accumulator = stm_subnet.concat(ntm_subnet);
 
-    let l1x_out = l1x.forward(accumulator).select(buckets);
-    let l1f_out = l1f.forward(accumulator);
-    let l1_out = (l1x_out + l1f_out).screlu();
+    let l1_out = l1.forward(accumulator).select(buckets).screlu();
 
     let l2x_out = l2x.forward(l1_out).select(buckets);
     let l2f_out = l2f.forward(l1_out);
@@ -171,49 +168,9 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let l3f_out = l3f.forward(l2_out);
     let l3_out = (l3x_out + l3f_out).sigmoid();
 
-    let value_loss = l3_out.squared_error(targets);
-
-    // clipping loss
-    let l1f_weights = l1f.weights;
-    let x2 = l1f_weights.concat(l1f_weights.copy());
-    let x4 = x2.concat(x2.copy());
-    let l1f_weights_multiplexed = x4.concat(x4.copy());
-    let l1_weights_summed = l1f_weights_multiplexed + l1x.weights;
-    let l1_weights_overflows = (l1_weights_summed.abs_pow(1.0) - 1.97).relu();
-    let l1_weights_loss = 0.01 * l1_weights_overflows.power_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu(), 1.0);
-
-    let l1f_biases = l1f.bias;
-    let x2 = l1f_biases.concat(l1f_biases.copy());
-    let x4 = x2.concat(x2.copy());
-    let l1f_biases_multiplexed = x4.concat(x4.copy());
-    let l1_biases_summed = l1f_biases_multiplexed + l1x.bias;
-    let l1_biases_overflows = (l1_biases_summed.abs_pow(1.0) - 1.97).relu();
-    let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
-
-    // goal is to ensure that each (factoriser_weight, bucket_weight) pair is in the range [-1.97, 1.97]
-    // this can't be done by directly clipping the weights, as we want to distribute across the factoriser.
-    // the above commented code doesn't work, because the shape of the layers makes the .concat operation
-    // not work as expected. instead, we need to apply the pair of layers to an input of all ones, and apply
-    // ReLU loss to the output vector.
-    // let l1x_weights = l1x.weights.select(buckets);
-    // let l1f_weights = l1f.weights;
-    // let l1_weights = l1x_weights + l1f_weights;
-    // let l1_weights_overflows = (l1_weights.abs_pow(1.0) - 1.97).relu();
-    // let l1_weights_loss = 0.01 * l1_weights_overflows.power_error((0.0 - l1_weights_overflows.copy_stop_grad()).relu(), 1.0);
-
-    // let l1x_biases = l1x.bias.select(buckets);
-    // let l1f_biases = l1f.bias;
-    // let l1_biases = l1x_biases + l1f_biases;
-    // let l1_biases_overflows = (l1_biases.abs_pow(1.0) - 1.97).relu();
-    // let l1_biases_loss = 0.01 * l1_biases_overflows.power_error((0.0 - l1_biases_overflows.copy_stop_grad()).relu(), 1.0);
-
-    let l1_loss = l1_weights_loss + l1_biases_loss;
+    l3_out.squared_error(targets);
 
     let value_node = l3_out.node();
 
-    let loss = value_loss.reduce_sum_across_batch() + l1_loss;
-
-    let out_node = loss.node();
-
-    (builder.build(ExecutionContext::default()), out_node, value_node)
+    (builder.build(ExecutionContext::default()), value_node)
 }
