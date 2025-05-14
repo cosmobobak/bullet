@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
     sync::{Mutex, MutexGuard},
 };
 
@@ -171,6 +171,14 @@ impl Add<f32> for GraphBuilderNode<'_> {
     }
 }
 
+impl Neg for GraphBuilderNode<'_> {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        -1.0 * self
+    }
+}
+
 impl<'a> Sub<GraphBuilderNode<'a>> for f32 {
     type Output = GraphBuilderNode<'a>;
 
@@ -192,6 +200,14 @@ impl<'a> Mul<GraphBuilderNode<'a>> for f32 {
 
     fn mul(self, rhs: GraphBuilderNode<'a>) -> Self::Output {
         rhs.builder.apply(GraphIROp::Unary(rhs.node, UnaryOp::Mul(self)))
+    }
+}
+
+impl<'a> Mul<GraphBuilderNode<'a>> for GraphBuilderNode<'a> {
+    type Output = GraphBuilderNode<'a>;
+
+    fn mul(self, rhs: GraphBuilderNode<'a>) -> Self::Output {
+        self.concat(rhs).pairwise_mul()
     }
 }
 
@@ -287,7 +303,13 @@ impl GraphBuilderNode<'_> {
 
     pub fn matmul(self, rhs: Self) -> Self {
         if self.builder.builder().get(rhs.node.idx).unwrap().sparse.is_some() {
-            self.builder.apply(GraphIROp::SparseAffineActivate(self.node, rhs.node, None, DiffableFromOutput::Identity))
+            self.builder.apply(GraphIROp::SparseAffineActivate(
+                self.node,
+                rhs.node,
+                None,
+                None,
+                DiffableFromOutput::Identity,
+            ))
         } else {
             self.builder.apply(GraphIROp::Matmul(self.node, false, rhs.node, false))
         }
@@ -379,5 +401,19 @@ impl<'a> Affine<'a> {
         activation: Activation,
     ) -> GraphBuilderNode<'a> {
         self.forward(stm).concat(self.forward(ntm)).activate(activation)
+    }
+
+    pub fn forward_sparse_with_values(
+        self,
+        stm: GraphBuilderNode<'a>,
+        vals: GraphBuilderNode<'a>,
+    ) -> GraphBuilderNode<'a> {
+        stm.builder.apply(GraphIROp::SparseAffineActivate(
+            self.weights.node,
+            stm.node,
+            Some(vals.node),
+            Some(self.bias.node),
+            DiffableFromOutput::Identity,
+        ))
     }
 }

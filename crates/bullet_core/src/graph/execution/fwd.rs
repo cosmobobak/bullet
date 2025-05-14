@@ -39,7 +39,7 @@ impl<D: Device> Graph<D> {
                 let bs = i.batch_size().unwrap_or(1);
                 setup_ones(w.buf.device(), internal, bs)?;
                 let ones = &internal.get("ones").unwrap().borrow().buf;
-                matmul::affine(w, wn.shape, i, inp.shape, b, bn.shape, ones, output)
+                matmul::affine(w, wn.shape, i, inp.shape, b, ones, output)
             }
             Copy(node, _) => {
                 assert_eq!(node.shape.size(), output.single_size);
@@ -188,18 +188,18 @@ impl<D: Device> Graph<D> {
             Slice(input, start, end) => {
                 slice::slice_vector_batched(input.shape, get(*input).values.dense()?, *start, *end, output)
             }
-            SparseAffineActivate(wn, inp, bn, act) => {
+            SparseAffineActivate(wn, inp, vals, bn, act) => {
                 let i = get(*inp);
                 let w = get(*wn);
                 let w = w.values.dense()?;
 
-                if let Some(bn) = bn {
-                    let b = get(*bn);
-                    let b = Some((b.values.dense()?, bn.shape));
-                    sparse::affine_activate(None, *act, w, wn.shape, i.values.sparse()?, inp.shape, b, output)
-                } else {
-                    sparse::affine_activate(None, *act, w, wn.shape, i.values.sparse()?, inp.shape, None, output)
-                }
+                let v = vals.map(get);
+                let v = if let Some(v) = v.as_ref() { Some(v.values.dense()?) } else { None };
+
+                let b = bn.map(|b| (get(b), b.shape));
+                let b = if let Some(b) = b.as_ref() { Some((b.0.values.dense()?, b.1)) } else { None };
+
+                sparse::affine_activate(None, *act, w, wn.shape, i.values.sparse()?, v, inp.shape, b, output)
             }
             SparseAffineDualActivate(wn, sn, nn, bn, act) => {
                 assert_eq!(sn.shape, nn.shape);

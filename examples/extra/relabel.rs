@@ -7,8 +7,7 @@ use bullet_lib::{
     trainer::default::{
         formats::bulletformat::{ChessBoard, DataLoader},
         inputs::{self, SparseInputType},
-        load_into_graph,
-        loader::DefaultDataPreparer,
+        loader::{load_into_graph, DefaultDataPreparer},
         outputs,
     },
     value::loader::TargetType,
@@ -44,8 +43,17 @@ fn main() {
         let loader = DataLoader::new(DATA_PATH, 128).unwrap();
 
         loader.map_batches(batch_size, |batch: &[ChessBoard]| {
-            let prepared =
-                DefaultDataPreparer::prepare(inputs, output_buckets, TargetType::Value, batch, 4, 0.0, eval_scale);
+            let prepared = DefaultDataPreparer::prepare(
+                inputs,
+                output_buckets,
+                |_, wdl| wdl,
+                None,
+                TargetType::Value,
+                batch,
+                4,
+                0.0,
+                eval_scale,
+            );
             sender.send((batch.to_vec(), prepared)).unwrap();
         });
 
