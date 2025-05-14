@@ -51,7 +51,7 @@ fn main() {
         AdamWParams::default(),
         inputs,
         output_buckets,
-        ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+        ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
             .map(SavedFormat::id)
             .to_vec(),
         false,
