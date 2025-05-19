@@ -1,6 +1,5 @@
 use bullet_lib::{
-    default::inputs::ChessBucketsMirroredFactorised,
-    game::outputs::MaterialCount,
+    game::{inputs::ChessBucketsMirrored, outputs::MaterialCount},
     nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         ExecutionContext, Graph, NetworkBuilder, Node, Shape,
@@ -21,7 +20,7 @@ const L3: usize = 32;
 
 const FINE_TUNING: bool = true;
 
-type Input = ChessBucketsMirroredFactorised;
+type Input = ChessBucketsMirrored;
 type Output = MaterialCount<8>;
 
 fn main() {
@@ -81,7 +80,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "legion".into(),
+        net_id: "iridescent".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -102,7 +101,7 @@ fn main() {
     // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
     let data_loader = loader::ViriBinpackLoader::new(
         "data/dataset3.viriformat",
-        512,
+        4096,
         4,
         viriformat::dataformat::Filter {
             min_ply: 16,
