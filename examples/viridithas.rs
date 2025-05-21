@@ -80,7 +80,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "inquisition".into(),
+        net_id: "resonant".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
