@@ -64,7 +64,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
 
     // trainer.load_from_checkpoint("checkpoints/scorpio-200");
-    trainer.optimiser_mut().load_weights_from_file("checkpoints/delenda-800/delenda-b800-merged.raw").unwrap();
+    trainer.optimiser_mut().load_weights_from_file("delenda-b800-merged.raw").unwrap();
 
     let initial_lr;
     let final_lr;
@@ -80,7 +80,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "iridescent".into(),
+        net_id: "inquisition".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -98,21 +98,21 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
-    let data_loader = loader::ViriBinpackLoader::new(
-        "data/dataset3.viriformat",
-        4096,
-        4,
-        viriformat::dataformat::Filter {
-            min_ply: 16,
-            min_pieces: 4,
-            max_eval: 31339,
-            filter_tactical: true,
-            filter_check: true,
-            filter_castling: false,
-            max_eval_incorrectness: u32::MAX,
-        },
-    );
+    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    // let data_loader = loader::ViriBinpackLoader::new(
+    //     "data/dataset4.viriformat",
+    //     4096,
+    //     4,
+    //     viriformat::dataformat::Filter {
+    //         min_ply: 16,
+    //         min_pieces: 4,
+    //         max_eval: 31339,
+    //         filter_tactical: true,
+    //         filter_check: true,
+    //         filter_castling: false,
+    //         max_eval_incorrectness: u32::MAX,
+    //     },
+    // );
 
     trainer.run(&schedule, &settings, &data_loader);
 

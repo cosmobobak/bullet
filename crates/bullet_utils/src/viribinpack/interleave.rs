@@ -27,10 +27,13 @@ impl InterleaveOptions {
         let target = File::create(&self.output)?;
         let mut writer = BufWriter::new(target);
 
+        let mut total_input_file_size = 0;
         for path in &self.inputs {
             let file = File::open(path)?;
 
             let count = file.metadata()?.len();
+
+            total_input_file_size += count;
 
             if count > 0 {
                 let fname = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "<unknown>".into());
@@ -80,8 +83,16 @@ impl InterleaveOptions {
             }
         }
 
+        writer.flush()?;
+
         println!();
         println!("Written {games} games to {:#?}", self.output);
+
+        let output_file = File::open(&self.output)?;
+        let output_file_size = output_file.metadata()?.len();
+        if output_file_size != total_input_file_size {
+            anyhow::bail!("Output file size {output_file_size} does not match input file size {total_input_file_size}");
+        }
 
         Ok(())
     }
