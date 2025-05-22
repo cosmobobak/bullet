@@ -80,7 +80,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "resonant".into(),
+        net_id: "angel".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
