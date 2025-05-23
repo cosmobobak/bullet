@@ -1,5 +1,5 @@
 use bullet_lib::{
-    game::{inputs::ChessBucketsMirrored, outputs::MaterialCount},
+    game::{inputs::{ChessBucketsMirroredFactorised}, outputs::MaterialCount},
     nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         ExecutionContext, Graph, NetworkBuilder, Node, Shape,
@@ -20,7 +20,7 @@ const L3: usize = 32;
 
 const FINE_TUNING: bool = true;
 
-type Input = ChessBucketsMirrored;
+type Input = ChessBucketsMirroredFactorised;
 type Output = MaterialCount<8>;
 
 fn main() {
@@ -50,7 +50,7 @@ fn main() {
         AdamWParams::default(),
         inputs,
         output_buckets,
-        ["l0w", "l0b", "l1w", "l1b", "l2w", "l2b", "l3w", "l3b"]
+        ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
             .map(SavedFormat::id)
             .to_vec(),
         false,
@@ -58,13 +58,17 @@ fn main() {
 
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
 
-    trainer.optimiser_mut().set_params_for_weight("l2w", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("l2b", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("l3w", no_clipping);
-    trainer.optimiser_mut().set_params_for_weight("l3b", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l2xw", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l2xb", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l3xw", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l3xb", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l2fw", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l2fb", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
+    trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    // trainer.load_from_checkpoint("checkpoints/scorpio-200");
-    trainer.optimiser_mut().load_weights_from_file("delenda-b800-merged.raw").unwrap();
+    trainer.load_from_checkpoint("checkpoints/delenda-800");
+    // trainer.optimiser_mut().load_weights_from_file("delenda-b800-merged.raw").unwrap();
 
     let initial_lr;
     let final_lr;
@@ -80,7 +84,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "angel".into(),
+        net_id: "broadside".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -140,9 +144,12 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     // trainable weights
     let l0 = builder.new_affine("l0", num_inputs, hl);
-    let l1 = builder.new_affine("l1", hl, output_buckets * L2);
-    let l2 = builder.new_affine("l2", L2, output_buckets * L3);
-    let l3 = builder.new_affine("l3", L3, output_buckets);
+    let l1x = builder.new_affine("l1x", hl, output_buckets * L2);
+    let l1f = builder.new_affine("l1f", hl, L2);
+    let l2x = builder.new_affine("l2x", L2, output_buckets * L3);
+    let l2f = builder.new_affine("l2f", L2, L3);
+    let l3x = builder.new_affine("l3x", L3, output_buckets);
+    let l3f = builder.new_affine("l3f", L3, 1);
 
     // 32 + 32 due to feature factoriser
     l0.init_with_effective_input_size(64);
@@ -152,9 +159,17 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
     let ntm_subnet = l0.forward(nstm).crelu().pairwise_mul();
     let accumulator = stm_subnet.concat(ntm_subnet);
 
-    let l1_out = l1.forward(accumulator).select(buckets).screlu();
-    let l2_out = l2.forward(l1_out).select(buckets).screlu();
-    let l3_out = l3.forward(l2_out).select(buckets).sigmoid();
+    let l1x_out = l1x.forward(accumulator).select(buckets);
+    let l1f_out = l1f.forward(accumulator);
+    let l1_out = (l1x_out + l1f_out).screlu();
+
+    let l2x_out = l2x.forward(l1_out).select(buckets);
+    let l2f_out = l2f.forward(l1_out);
+    let l2_out = (l2x_out + l2f_out).screlu();
+
+    let l3x_out = l3x.forward(l2_out).select(buckets);
+    let l3f_out = l3f.forward(l2_out);
+    let l3_out = (l3x_out + l3f_out).sigmoid();
 
     l3_out.squared_error(targets);
 
