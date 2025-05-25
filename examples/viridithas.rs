@@ -84,7 +84,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "foundation".into(),
+        net_id: "serpent".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -105,7 +105,7 @@ fn main() {
     // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
     let data_loader = loader::ViriBinpackLoader::new(
         "data/dataset4.viriformat",
-        1024 * 6,
+        1024 * 8,
         4,
         viriformat::dataformat::Filter {
             min_ply: 16,

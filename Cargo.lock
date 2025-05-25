@@ -59,6 +59,7 @@ dependencies = [
  "anyhow",
  "bulletformat",
  "montyformat",
+ "rand",
  "structopt",
  "viriformat",
 ]
