@@ -115,6 +115,10 @@ fn main() {
             filter_check: true,
             filter_castling: false,
             max_eval_incorrectness: u32::MAX,
+            random_fen_skipping: false,
+            random_fen_skip_probability: 3.0 / 4.0,
+            wld_filtered: false,
+            ..Default::default()
         },
     );
 
