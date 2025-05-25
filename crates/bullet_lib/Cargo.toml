@@ -39,6 +39,10 @@ name = "testnet"
 path = "../../examples/testnet.rs"
 
 [[example]]
+name = "viridithas"
+path = "../../examples/viridithas.rs"
+
+[[example]]
 name = "morelayers"
 path = "../../examples/morelayers.rs"
 
