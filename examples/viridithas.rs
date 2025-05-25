@@ -78,7 +78,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "falke".into(),
+        net_id: "adler".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -96,7 +96,13 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    let data_loader = loader::ViriBinpackLoader::new(
+        "data/dataset4.viriformat",
+        4096,
+        4,
+        viriformat::dataformat::Filter::default()
+    );
 
     trainer.run(&schedule, &settings, &data_loader);
 
