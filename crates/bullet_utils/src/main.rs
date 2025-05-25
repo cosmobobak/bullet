@@ -2,9 +2,9 @@ mod convert;
 mod count_buckets;
 mod interleave;
 mod montybinpack;
-mod viribinpack;
 mod shuffle;
 mod validate;
+mod viribinpack;
 
 use structopt::StructOpt;
 
