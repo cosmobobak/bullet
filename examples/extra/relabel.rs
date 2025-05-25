@@ -48,6 +48,7 @@ fn main() {
                 output_buckets,
                 |_, wdl| wdl,
                 None,
+                false,
                 TargetType::Value,
                 batch,
                 4,

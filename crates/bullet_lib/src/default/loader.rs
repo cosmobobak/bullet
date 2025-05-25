@@ -3,7 +3,7 @@ mod montybinpack;
 mod rng;
 mod sfbinpack;
 mod text;
-mod viribinpack;
+pub mod viribinpack;
 
 use bullet_core::backend::device::OperationError;
 use bulletformat::BulletFormat;
@@ -66,22 +66,25 @@ pub struct DefaultDataLoader<I: SparseInputType, O, D> {
     output_getter: O,
     blend_getter: B<I>,
     weight_getter: Option<Wgt<I>>,
+    use_win_rate_model: bool,
     wdl: TargetType,
     scale: f32,
     loader: D,
 }
 
 impl<I: SparseInputType, O, D> DefaultDataLoader<I, O, D> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         input_getter: I,
         output_getter: O,
         blend_getter: B<I>,
         weight_getter: Option<Wgt<I>>,
+        use_win_rate_model: bool,
         wdl: TargetType,
         scale: f32,
         loader: D,
     ) -> Self {
-        Self { input_getter, output_getter, blend_getter, weight_getter, wdl, scale, loader }
+        Self { input_getter, output_getter, blend_getter, weight_getter, use_win_rate_model, wdl, scale, loader }
     }
 }
 
@@ -113,6 +116,7 @@ where
             self.output_getter,
             self.blend_getter,
             self.weight_getter,
+            self.use_win_rate_model,
             self.wdl,
             data,
             threads,
@@ -163,6 +167,7 @@ where
         output_getter: O,
         blend_getter: B<I>,
         weight_getter: Option<Wgt<I>>,
+        use_win_rate_model: bool,
         wdl: TargetType,
         data: &[I::RequiredDataType],
         threads: usize,
@@ -237,7 +242,14 @@ where
 
                                 match wdl {
                                     TargetType::Value => {
-                                        let score = 1. / (1. + (-rscale * f32::from(pos.score())).exp());
+                                        let score = f32::from(pos.score());
+                                        let score = if use_win_rate_model {
+                                            let p = (score - 270.0) / 380.0;
+                                            let pm = (-score - 270.0) / 380.0;
+                                            0.5 * (1.0 + sigmoid(p) - sigmoid(pm))
+                                        } else {
+                                            sigmoid(rscale * score)
+                                        };
                                         let result = f32::from(pos.result() as u8) / 2.0;
                                         let blend = blend_getter(pos, blend);
                                         assert!((0.0..=1.0).contains(&blend), "WDL proportion must be in [0, 1]");
@@ -247,7 +259,14 @@ where
                                         results_chunk[output_size * i + usize::from(pos.result() as u8)] = 1.0;
                                     }
                                     TargetType::ValueAndWDL => {
-                                        let score = 1. / (1. + (-rscale * f32::from(pos.score())).exp());
+                                        let score = f32::from(pos.score());
+                                        let score = if use_win_rate_model {
+                                            let p = (score - 270.0) / 380.0;
+                                            let pm = (-score - 270.0) / 380.0;
+                                            0.5 * (1.0 + sigmoid(p) - sigmoid(pm))
+                                        } else {
+                                            sigmoid(rscale * score)
+                                        };
                                         let result = f32::from(pos.result() as u8) / 2.0;
                                         let blend = blend_getter(pos, blend);
                                         assert!((0.0..=1.0).contains(&blend), "WDL proportion must be in [0, 1]");
@@ -262,6 +281,10 @@ where
 
         prep
     }
+}
+
+fn sigmoid(x: f32) -> f32 {
+    1. / (1. + (-x).exp())
 }
 
 /// # Safety

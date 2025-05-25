@@ -147,6 +147,7 @@ where
             output_getter: buckets,
             blend_getter: self.blend_getter,
             weight_getter: self.weight_getter,
+            use_win_rate_model: false,
             output_node,
             additional_inputs: AdditionalTrainerInputs { wdl: match output_size {
                 1 => TargetType::Value,
