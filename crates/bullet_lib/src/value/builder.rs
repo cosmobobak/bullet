@@ -11,7 +11,9 @@ use crate::{
 
 use super::{loader::B, ValueTrainer};
 
-pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out, L> {
+type LossFn = for<'a> fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>;
+
+pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     input_getter: Option<I>,
     saved_format: Option<Vec<SavedFormat>>,
     optimiser: Option<O>,
@@ -20,12 +22,12 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out, L> {
     output_buckets: Out,
     blend_getter: B<I>,
     weight_getter: Option<Wgt<I>>,
-    loss_fn: Option<L>,
+    loss_fn: Option<LossFn>,
     factorised: Vec<String>,
     wdl_output: bool,
 }
 
-impl<O, I, L> Default for ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets, L>
+impl<O, I> Default for ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
 where
     I: SparseInputType,
 {
@@ -46,11 +48,10 @@ where
     }
 }
 
-impl<O, I, P, Out, L> ValueTrainerBuilder<O, I, P, Out, L>
+impl<O, I, P, Out> ValueTrainerBuilder<O, I, P, Out>
 where
     I: SparseInputType,
     O: OptimiserType,
-    L: for<'a> Fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
 {
     pub fn inputs(mut self, inputs: I) -> Self {
         assert!(self.input_getter.is_none(), "Inputs already set!");
@@ -80,7 +81,7 @@ where
         self
     }
 
-    pub fn loss_fn(mut self, f: L) -> Self {
+    pub fn loss_fn(mut self, f: LossFn) -> Self {
         assert!(self.loss_fn.is_none(), "Loss function already set!");
         self.loss_fn = Some(f);
         self
@@ -105,16 +106,15 @@ where
         self
     }
 
-    fn build_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
+    fn build_custom_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
     where
-        F: for<'a> Fn(usize, usize, &'a NetworkBuilder) -> NetworkBuilderNode<'a>,
+        F: for<'a> Fn(usize, usize, Nbn<'a>, &'a NetworkBuilder) -> (Nbn<'a>, Nbn<'a>),
         Out: Bucket,
         Out::Inner: OutputBuckets<I::RequiredDataType>,
     {
         let input_getter = self.input_getter.expect("Need to set inputs!");
         let saved_format = self.saved_format.expect("Need to set save format!");
         let buckets = self.output_buckets.inner();
-        let loss = self.loss_fn.expect("Loss function not specified!");
 
         let inputs = input_getter.num_inputs();
         let nnz = input_getter.max_active();
@@ -127,18 +127,14 @@ where
 
         let output_size = if self.wdl_output { 3 } else { 1 };
         let targets = builder.new_dense_input("targets", Shape::new(output_size, 1));
-        let out = f(inputs, nnz, &builder);
-        let output_node = out.node();
-
-        let raw_loss = loss(out, targets);
-
-        assert_eq!(raw_loss.node().shape, Shape::new(1, 1));
+        let (out, loss) = f(inputs, nnz, targets, &builder);
 
         if self.weight_getter.is_some() {
             let entry_weights = builder.new_dense_input("entry_weights", Shape::new(1, 1));
-            let _ = entry_weights * raw_loss;
+            let _ = entry_weights * loss;
         }
 
+        let output_node = out.node();
         let graph = builder.build(ExecutionContext::default());
 
         ValueTrainer {
@@ -158,6 +154,25 @@ where
             saved_format: saved_format.clone(),
             factorised_weights: (!self.factorised.is_empty()).then_some(self.factorised),
         }
+    }
+
+    fn build_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
+    where
+        F: for<'a> Fn(usize, usize, &'a NetworkBuilder) -> NetworkBuilderNode<'a>,
+        Out: Bucket,
+        Out::Inner: OutputBuckets<I::RequiredDataType>,
+    {
+        let loss = self.loss_fn.expect("Loss function not specified!");
+
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let out = f(inputs, nnz, builder);
+
+            let raw_loss = loss(out, targets);
+
+            assert_eq!(raw_loss.node().shape, Shape::new(1, 1));
+
+            (out, raw_loss)
+        })
     }
 }
 
@@ -198,7 +213,7 @@ impl<T> Bucket for OutputBucket<T> {
 pub struct SinglePerspective;
 pub struct DualPerspective;
 
-impl<O, I, Out, L> ValueTrainerBuilder<O, I, SinglePerspective, Out, L>
+impl<O, I, Out> ValueTrainerBuilder<O, I, SinglePerspective, Out>
 where
     I: SparseInputType,
     O: OptimiserType,
@@ -207,7 +222,7 @@ where
         self
     }
 
-    pub fn dual_perspective(self) -> ValueTrainerBuilder<O, I, DualPerspective, Out, L> {
+    pub fn dual_perspective(self) -> ValueTrainerBuilder<O, I, DualPerspective, Out> {
         ValueTrainerBuilder {
             input_getter: self.input_getter,
             saved_format: self.saved_format,
@@ -224,7 +239,7 @@ where
     }
 }
 
-impl<O, I, P, L> ValueTrainerBuilder<O, I, P, NoOutputBuckets, L>
+impl<O, I, P> ValueTrainerBuilder<O, I, P, NoOutputBuckets>
 where
     I: SparseInputType,
     O: OptimiserType,
@@ -232,7 +247,7 @@ where
     pub fn output_buckets<Out: OutputBuckets<I::RequiredDataType>>(
         self,
         buckets: Out,
-    ) -> ValueTrainerBuilder<O, I, P, OutputBucket<Out>, L> {
+    ) -> ValueTrainerBuilder<O, I, P, OutputBucket<Out>> {
         assert!(Out::BUCKETS > 1, "The output bucket type must have more than 1 bucket!");
 
         ValueTrainerBuilder {
@@ -254,11 +269,10 @@ where
 type Nb<'a> = &'a NetworkBuilder;
 type Nbn<'a> = NetworkBuilderNode<'a>;
 
-impl<O, I, L> ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets, L>
+impl<O, I> ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
 where
     I: SparseInputType,
     O: OptimiserType,
-    L: for<'a> Fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
 {
     pub fn build<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
     where
@@ -271,11 +285,10 @@ where
     }
 }
 
-impl<O, I, L> ValueTrainerBuilder<O, I, DualPerspective, NoOutputBuckets, L>
+impl<O, I> ValueTrainerBuilder<O, I, DualPerspective, NoOutputBuckets>
 where
     I: SparseInputType,
     O: OptimiserType,
-    L: for<'a> Fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
 {
     pub fn build<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
     where
@@ -289,12 +302,11 @@ where
     }
 }
 
-impl<O, I, Out, L> ValueTrainerBuilder<O, I, SinglePerspective, OutputBucket<Out>, L>
+impl<O, I, Out> ValueTrainerBuilder<O, I, SinglePerspective, OutputBucket<Out>>
 where
     I: SparseInputType,
     O: OptimiserType,
     Out: OutputBuckets<I::RequiredDataType>,
-    L: for<'a> Fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
 {
     pub fn build<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
     where
@@ -308,12 +320,11 @@ where
     }
 }
 
-impl<O, I, Out, L> ValueTrainerBuilder<O, I, DualPerspective, OutputBucket<Out>, L>
+impl<O, I, Out> ValueTrainerBuilder<O, I, DualPerspective, OutputBucket<Out>>
 where
     I: SparseInputType,
     O: OptimiserType,
     Out: OutputBuckets<I::RequiredDataType>,
-    L: for<'a> Fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
 {
     pub fn build<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
     where
@@ -324,6 +335,80 @@ where
             let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
             let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
             f(builder, stm, ntm, buckets)
+        })
+    }
+}
+
+impl<O, I> ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
+where
+    I: SparseInputType,
+    O: OptimiserType,
+{
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
+    where
+        F: for<'a> Fn(Nb<'a>, Nbn<'a>, Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
+            f(builder, stm, targets)
+        })
+    }
+}
+
+impl<O, I> ValueTrainerBuilder<O, I, DualPerspective, NoOutputBuckets>
+where
+    I: SparseInputType,
+    O: OptimiserType,
+{
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
+    where
+        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
+            f(builder, (stm, ntm), targets)
+        })
+    }
+}
+
+impl<O, I, Out> ValueTrainerBuilder<O, I, SinglePerspective, OutputBucket<Out>>
+where
+    I: SparseInputType,
+    O: OptimiserType,
+    Out: OutputBuckets<I::RequiredDataType>,
+{
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
+    where
+        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
+            f(builder, (stm, buckets), targets)
+        })
+    }
+}
+
+impl<O, I, Out> ValueTrainerBuilder<O, I, DualPerspective, OutputBucket<Out>>
+where
+    I: SparseInputType,
+    O: OptimiserType,
+    Out: OutputBuckets<I::RequiredDataType>,
+{
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
+    where
+        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
+            f(builder, (stm, ntm, buckets), targets)
         })
     }
 }

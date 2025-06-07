@@ -1,11 +1,13 @@
 use std::{
     fs::File,
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Write},
     path::PathBuf,
 };
 
-use rand::Rng;
 use structopt::StructOpt;
+use viriformat::dataformat::Game;
+
+use crate::Rand;
 
 #[derive(StructOpt)]
 pub struct InterleaveOptions {
@@ -23,9 +25,7 @@ impl InterleaveOptions {
         let mut total = 0;
 
         let target = File::create(&self.output)?;
-        // let validation_target = File::create(self.output.with_extension("validation"))?;
         let mut writer = BufWriter::new(target);
-        // let mut validation_writer = BufWriter::new(validation_target);
 
         let mut total_input_file_size = 0;
         for path in &self.inputs {
@@ -44,7 +44,7 @@ impl InterleaveOptions {
         }
 
         let mut remaining = total;
-        let mut rng = rand::rng();
+        let mut rng = Rand::default();
 
         const INTERVAL: u64 = 1024 * 1024 * 256;
         let mut prev = remaining / INTERVAL;
@@ -53,7 +53,7 @@ impl InterleaveOptions {
         let mut games = 0usize;
 
         while remaining > 0 {
-            let mut spot = rng.random_range(..remaining);
+            let mut spot = rng.rand() % remaining;
             let mut idx = 0;
             while streams[idx].0 < spot {
                 spot -= streams[idx].0;
@@ -63,19 +63,7 @@ impl InterleaveOptions {
             let (count, reader, _) = &mut streams[idx];
 
             buffer.clear();
-
-            let mut initial_position = [0; 32];
-            reader.read_exact(&mut initial_position)?;
-            buffer.extend_from_slice(&initial_position);
-            loop {
-                let mut buf = [0; 4];
-                reader.read_exact(&mut buf)?;
-                buffer.extend_from_slice(&buf);
-                if buf == [0; 4] {
-                    break;
-                }
-            }
-
+            Game::deserialise_fast_into_buffer(reader, &mut buffer)?;
             writer.write_all(&buffer)?;
             games += 1;
 
