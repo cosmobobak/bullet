@@ -1,5 +1,5 @@
 use bullet_lib::{
-    game::{inputs::{ChessBucketsMirroredFactorised}, outputs::MaterialCount},
+    game::{inputs::ChessBucketsMirroredFactorised, outputs::MaterialCount},
     nn::{
         optimiser::{AdamWOptimiser, AdamWParams},
         ExecutionContext, Graph, NetworkBuilder, Node, Shape,
@@ -44,10 +44,12 @@ fn main() {
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
     let (graph, value_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
+    let adamw = AdamWParams { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -0.99, max_weight: 0.99 };
+
     let mut trainer = Trainer::<AdamWOptimiser, _, _>::new(
         graph,
         value_node,
-        AdamWParams::default(),
+        adamw,
         inputs,
         output_buckets,
         ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
@@ -56,7 +58,7 @@ fn main() {
         false,
     );
 
-    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..AdamWParams::default() };
+    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
 
     trainer.optimiser_mut().set_params_for_weight("l2xw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l2xb", no_clipping);
