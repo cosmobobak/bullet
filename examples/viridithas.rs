@@ -1,7 +1,7 @@
 use bullet_lib::{
     game::{inputs::ChessBucketsMirrored, outputs::MaterialCount},
     nn::{
-        optimiser::{AdamWOptimiser, AdamWParams},
+        optimiser::{RangerOptimiser, RangerParams},
         ExecutionContext, Graph, InitSettings, NetworkBuilder, Node, Shape,
     },
     trainer::{
@@ -44,7 +44,7 @@ fn main() {
     // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
     let (graph, value_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
-    let adamw = AdamWParams { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -0.99, max_weight: 0.99 };
+    let ranger = RangerParams { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -0.99, max_weight: 0.99 };
 
     let mut saves =
         ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
@@ -63,9 +63,9 @@ fn main() {
     });
 
     let mut trainer =
-        Trainer::<AdamWOptimiser, _, _>::new(graph, value_node, adamw, inputs, output_buckets, saves, false);
+        Trainer::<RangerOptimiser, _, _>::new(graph, value_node, ranger, inputs, output_buckets, saves, false);
 
-    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
+    let no_clipping = RangerParams { min_weight: -128.0, max_weight: 128.0, ..ranger };
 
     trainer.optimiser_mut().set_params_for_weight("l2xw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l2xb", no_clipping);
