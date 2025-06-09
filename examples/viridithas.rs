@@ -93,7 +93,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "retrochron".into(),
+        net_id: "vengeance".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
