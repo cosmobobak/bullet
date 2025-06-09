@@ -18,7 +18,7 @@ const HL: usize = 2048;
 const L2: usize = 32;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = false;
+const FINE_TUNING: bool = true;
 
 type Input = ChessBucketsMirrored;
 type Output = MaterialCount<8>;
@@ -76,7 +76,7 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    // trainer.load_from_checkpoint("checkpoints/delenda-800");
+    trainer.load_from_checkpoint("checkpoints/retrochron-800");
     // trainer.optimiser_mut().load_weights_from_file("delenda-b800-merged.raw").unwrap();
 
     let initial_lr;
@@ -93,7 +93,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "retrochron".into(),
+        net_id: "fixpoint".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -101,7 +101,7 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.4 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
         lr_scheduler: lr::Warmup {
             inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 1600,
@@ -111,25 +111,22 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
-    // let data_loader = loader::ViriBinpackLoader::new(
-    //     "data/dataset4.viriformat",
-    //     1024 * 8,
-    //     4,
-    //     viriformat::dataformat::Filter {
-    //         min_ply: 16,
-    //         min_pieces: 4,
-    //         max_eval: 31339,
-    //         filter_tactical: true,
-    //         filter_check: true,
-    //         filter_castling: false,
-    //         max_eval_incorrectness: u32::MAX,
-    //         random_fen_skipping: false,
-    //         random_fen_skip_probability: 3.0 / 4.0,
-    //         wld_filtered: false,
-    //         ..Default::default()
-    //     },
-    // );
+    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    let data_loader = loader::ViriBinpackLoader::new(
+        "data/dataset4.viriformat",
+        1024 * 8,
+        4,
+        viriformat::dataformat::Filter {
+            min_ply: 16,
+            min_pieces: 4,
+            max_eval: 31339,
+            filter_tactical: true,
+            filter_check: true,
+            filter_castling: false,
+            max_eval_incorrectness: u32::MAX,
+            ..Default::default()
+        },
+    );
 
     trainer.run(&schedule, &settings, &data_loader);
 
