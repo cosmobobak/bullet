@@ -76,7 +76,6 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    trainer.load_from_checkpoint("checkpoints/retrochron-800");
     // trainer.optimiser_mut().load_weights_from_file("delenda-b800-merged.raw").unwrap();
 
     let initial_lr;
@@ -93,7 +92,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "fixpoint".into(),
+        net_id: "basilisk-.5".into(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -101,7 +100,7 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.6 },
         lr_scheduler: lr::Warmup {
             inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 1600,
@@ -111,24 +110,32 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
-    // let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
-    let data_loader = loader::ViriBinpackLoader::new(
-        "data/dataset4.viriformat",
-        1024 * 8,
-        4,
-        viriformat::dataformat::Filter {
-            min_ply: 16,
-            min_pieces: 4,
-            max_eval: 31339,
-            filter_tactical: true,
-            filter_check: true,
-            filter_castling: false,
-            max_eval_incorrectness: u32::MAX,
-            ..Default::default()
-        },
-    );
+    let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
+    // let data_loader = loader::ViriBinpackLoader::new(
+    //     "data/dataset5.viriformat",
+    //     1024 * 4,
+    //     4,
+    //     viriformat::dataformat::Filter {
+    //         min_ply: 16,
+    //         min_pieces: 4,
+    //         max_eval: 31339,
+    //         filter_tactical: true,
+    //         filter_check: true,
+    //         filter_castling: false,
+    //         max_eval_incorrectness: u32::MAX,
+    //         ..Default::default()
+    //     },
+    // );
 
-    trainer.run(&schedule, &settings, &data_loader);
+    for wdl in [0.6, 0.7, 0.8, 0.9, 1.0] {
+        let spec_schedule = TrainingSchedule { 
+            net_id: format!("basilisk-{wdl}"),
+            wdl_scheduler: wdl::ConstantWDL { value: wdl },
+            ..schedule.clone()
+        };
+        trainer.load_from_checkpoint("checkpoints/retrochron-800");
+        trainer.run(&spec_schedule, &settings, &data_loader);
+    }
 
     for fen in [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
