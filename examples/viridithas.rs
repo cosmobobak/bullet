@@ -15,10 +15,12 @@ use bullet_lib::{
 use bulletformat::ChessBoard;
 
 const HL: usize = 2048;
-const L2: usize = 32;
+const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = true;
+const FINE_TUNING: bool = false;
+
+const CLIP: f32 = 0.99 * 2.0;
 
 type Input = ChessBucketsMirrored;
 type Output = MaterialCount<8>;
@@ -41,16 +43,16 @@ fn main() {
     let max_active = inputs::SparseInputType::max_active(&inputs);
     let num_buckets = <Output as outputs::OutputBuckets<ChessBoard>>::BUCKETS;
 
-    // let (mut graph, output_node) = build_network(inputs.size(), HL, 8);
     let (graph, value_node) = build_network(num_inputs, max_active, num_buckets, HL);
 
-    let adamw = AdamWParams { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -0.99, max_weight: 0.99 };
+    let adamw = AdamWParams { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -CLIP, max_weight: CLIP };
 
     let mut saves =
         ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
             .map(SavedFormat::id)
             .to_vec();
 
+    // merge factoriser weights when saving:
     saves[0] = saves[0].clone().add_transform(|builder, _, mut weights| {
         let factoriser = builder.get_weights("l0f").get_dense_vals().unwrap();
         let expanded = factoriser.repeat(weights.len() / factoriser.len());
@@ -76,23 +78,21 @@ fn main() {
     trainer.optimiser_mut().set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser_mut().set_params_for_weight("l3fb", no_clipping);
 
-    // trainer.optimiser_mut().load_weights_from_file("delenda-b800-merged.raw").unwrap();
-
     let initial_lr;
     let final_lr;
     let sbs;
     if FINE_TUNING {
         initial_lr = 0.0005;
-        final_lr = 0.0005 * f32::powi(0.3, 3);
+        final_lr = 0.0005 * f32::powi(0.3, 6);
         sbs = 200;
     } else {
         initial_lr = 0.001;
-        final_lr = 0.001 * f32::powi(0.3, 3);
+        final_lr = 0.001 * f32::powi(0.3, 6);
         sbs = 800;
     }
 
     let schedule = TrainingSchedule {
-        net_id: "basilisk-.5".into(),
+        net_id: "division".to_string(),
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
@@ -100,9 +100,9 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::ConstantWDL { value: 0.6 },
+        wdl_scheduler: wdl::LinearWDL { start: 0.4, end: 0.65 },
         lr_scheduler: lr::Warmup {
-            inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: sbs },
+            inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 1600,
         },
         save_rate: 200,
@@ -111,31 +111,9 @@ fn main() {
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 512 };
 
     let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
-    // let data_loader = loader::ViriBinpackLoader::new(
-    //     "data/dataset5.viriformat",
-    //     1024 * 4,
-    //     4,
-    //     viriformat::dataformat::Filter {
-    //         min_ply: 16,
-    //         min_pieces: 4,
-    //         max_eval: 31339,
-    //         filter_tactical: true,
-    //         filter_check: true,
-    //         filter_castling: false,
-    //         max_eval_incorrectness: u32::MAX,
-    //         ..Default::default()
-    //     },
-    // );
 
-    for wdl in [0.6, 0.7, 0.8, 0.9, 1.0] {
-        let spec_schedule = TrainingSchedule { 
-            net_id: format!("basilisk-{wdl}"),
-            wdl_scheduler: wdl::ConstantWDL { value: wdl },
-            ..schedule.clone()
-        };
-        trainer.load_from_checkpoint("checkpoints/retrochron-800");
-        trainer.run(&spec_schedule, &settings, &data_loader);
-    }
+    // trainer.load_from_checkpoint("checkpoints/delenda-800");
+    trainer.run(&schedule, &settings, &data_loader);
 
     for fen in [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -174,8 +152,8 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     // trainable weights
     // let l0 = builder.new_affine("l0", num_inputs, hl);
-    let l1x = builder.new_affine("l1x", hl, output_buckets * L2 / 2);
-    let l1f = builder.new_affine("l1f", hl, L2 / 2);
+    let l1x = builder.new_affine("l1x", hl, output_buckets * L2);
+    let l1f = builder.new_affine("l1f", hl, L2);
     let l2x = builder.new_affine("l2x", L2, output_buckets * L3);
     let l2f = builder.new_affine("l2f", L2, L3);
     let l3x = builder.new_affine("l3x", L3, output_buckets);
@@ -188,8 +166,7 @@ fn build_network(num_inputs: usize, max_active: usize, output_buckets: usize, hl
 
     let l1x_out = l1x.forward(accumulator).select(buckets);
     let l1f_out = l1f.forward(accumulator);
-    let l1_out = l1x_out + l1f_out;
-    let l1_out = l1_out.concat(l1_out.abs_pow(2.0)).crelu();
+    let l1_out = (l1x_out + l1f_out).screlu();
 
     let l2x_out = l2x.forward(l1_out).select(buckets);
     let l2f_out = l2f.forward(l1_out);
