@@ -3,14 +3,20 @@ use std::marker::PhantomData;
 use bullet_core::{
     graph::{builder::Shape, ir::args::GraphIRCompileArgs},
     optimiser::Optimiser,
+    trainer::Trainer,
 };
 
 use crate::{
-    default::{AdditionalTrainerInputs, Wgt}, game::{inputs::SparseInputType, outputs::OutputBuckets}, nn::{optimiser::OptimiserType, NetworkBuilder, NetworkBuilderNode}, trainer::save::SavedFormat, value::loader::TargetType, ExecutionContext
+    game::{inputs::SparseInputType, outputs::OutputBuckets},
+    nn::{optimiser::OptimiserType, NetworkBuilder, NetworkBuilderNode},
+    trainer::save::SavedFormat,
+    value::{loader::TargetType, ValueTrainerState},
+    ExecutionContext,
 };
 
-use super::{loader::B, ValueTrainer};
+use super::{ValueTrainer, B};
 
+type Wgt<I> = fn(&<I as SparseInputType>::RequiredDataType) -> f32;
 type LossFn = for<'a> fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>;
 
 pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
@@ -25,6 +31,7 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     loss_fn: Option<LossFn>,
     factorised: Vec<String>,
     wdl_output: bool,
+    use_win_rate_model: bool,
 }
 
 impl<O, I> Default for ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
@@ -43,6 +50,7 @@ where
             weight_getter: None,
             loss_fn: None,
             wdl_output: false,
+            use_win_rate_model: false,
             factorised: Vec::new(),
         }
     }
@@ -106,6 +114,11 @@ where
         self
     }
 
+    pub fn use_win_rate_model(mut self) -> Self {
+        self.use_win_rate_model = true;
+        self
+    }
+
     fn build_custom_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
     where
         F: for<'a> Fn(usize, usize, Nbn<'a>, &'a NetworkBuilder) -> (Nbn<'a>, Nbn<'a>),
@@ -137,23 +150,24 @@ where
         let output_node = out.node();
         let graph = builder.build(ExecutionContext::default());
 
-        ValueTrainer {
+        ValueTrainer(Trainer {
             optimiser: Optimiser::new(graph, Default::default()).unwrap(),
-            input_getter: input_getter.clone(),
-            output_getter: buckets,
-            blend_getter: self.blend_getter,
-            weight_getter: self.weight_getter,
-            use_win_rate_model: false,
-            output_node,
-            additional_inputs: AdditionalTrainerInputs { wdl: match output_size {
-                1 => TargetType::Value,
-                3 => TargetType::WDL,
-                4 => TargetType::ValueAndWDL,
-                _ => panic!("Invalid output size!"),
-            } },
-            saved_format: saved_format.clone(),
-            factorised_weights: (!self.factorised.is_empty()).then_some(self.factorised),
-        }
+            state: ValueTrainerState {
+                input_getter: input_getter.clone(),
+                output_getter: buckets,
+                blend_getter: self.blend_getter,
+                weight_getter: self.weight_getter,
+                output_node,
+                use_win_rate_model: self.use_win_rate_model,
+                wdl: match output_size {
+                    1 => TargetType::Value,
+                    3 => TargetType::WDL,
+                    4 => TargetType::ValueAndWDL,
+                    _ => panic!("Invalid output size!"),
+                },
+                saved_format: saved_format.clone(),
+            },
+        })
     }
 
     fn build_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
@@ -235,6 +249,7 @@ where
             loss_fn: self.loss_fn,
             factorised: self.factorised,
             wdl_output: self.wdl_output,
+            use_win_rate_model: self.use_win_rate_model,
         }
     }
 }
@@ -262,6 +277,7 @@ where
             loss_fn: self.loss_fn,
             factorised: self.factorised,
             wdl_output: self.wdl_output,
+            use_win_rate_model: self.use_win_rate_model,
         }
     }
 }
