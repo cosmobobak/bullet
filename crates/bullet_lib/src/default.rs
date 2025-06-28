@@ -19,7 +19,7 @@ pub use builder::{Loss, TrainerBuilder};
 
 use crate::value::loader::{
     load_into_graph, CanBeDirectlySequentiallyLoaded, DataLoader, DefaultDataLoader, DefaultDataPreparer,
-    DirectSequentialDataLoader, LoadableDataType, B,
+    DirectSequentialDataLoader, LoadableDataType, TargetType, B,
 };
 use testing::{EngineType, TestSettings};
 

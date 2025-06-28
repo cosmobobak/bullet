@@ -7,7 +7,10 @@ use std::cell::RefCell;
 
 pub use builder::{NoOutputBuckets, ValueTrainerBuilder};
 
-use crate::{nn::ExecutionContext, value::loader::DefaultDataPreparer};
+use crate::{
+    nn::ExecutionContext,
+    value::loader::{DefaultDataPreparer, TargetType},
+};
 use bullet_core::{
     graph::Node,
     optimiser::OptimiserState,
@@ -72,7 +75,7 @@ pub struct ValueTrainerState<Inp: SparseInputType, Out> {
     output_node: Node,
     saved_format: Vec<SavedFormat>,
     use_win_rate_model: bool,
-    wdl: bool,
+    wdl: TargetType,
 }
 
 impl<Opt, Inp, Out> ValueTrainer<Opt, Inp, Out>
