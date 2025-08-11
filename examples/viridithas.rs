@@ -18,7 +18,7 @@ const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
-const FINE_TUNING: bool = false;
+const FINE_TUNING: bool = true;
 
 const CLIP: f32 = 0.99 * 2.0;
 
@@ -100,7 +100,8 @@ fn main() {
             end_superbatch: sbs,
         },
         eval_scale: 400.0,
-        wdl_scheduler: wdl::LinearWDL { start: 0.4, end: 0.65 },
+        // wdl_scheduler: wdl::LinearWDL { start: 0.4, end: 0.65 },
+        wdl_scheduler: wdl::ConstantWDL { value: 0.65 },
         lr_scheduler: lr::Warmup {
             inner: lr::LinearDecayLR { initial_lr, final_lr, final_superbatch: sbs },
             warmup_batches: 1600,
@@ -112,7 +113,7 @@ fn main() {
 
     let data_loader = loader::DirectSequentialDataLoader::new(&["data/dataset.bin"]);
 
-    // trainer.load_from_checkpoint("checkpoints/delenda-800");
+    trainer.load_from_checkpoint("checkpoints/division-800");
     trainer.run(&schedule, &settings, &data_loader);
 
     for fen in [
