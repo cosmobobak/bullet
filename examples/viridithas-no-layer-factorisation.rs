@@ -45,7 +45,7 @@ fn main() {
     const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
     let mut saves =
-        ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+        ["l0w", "l0b", "l1w", "l1b" "l2w", "l2b", "l3w", "l3b"]
             .map(SavedFormat::id)
             .to_vec();
 
@@ -80,49 +80,29 @@ fn main() {
             l0.weights = l0.weights + expanded_factoriser;
 
             // layerstack weights
-            let l1x = builder.new_affine("l1x", HL, NUM_OUTPUT_BUCKETS * L2);
-            let l1f = builder.new_affine("l1f", HL, L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
-            let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
-            let l3f = builder.new_affine("l3f", L3, 1);
+            let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
+            let l2 = builder.new_affine("l2", L2, NUM_OUTPUT_BUCKETS * L3);
+            let l3 = builder.new_affine("l3", L3, NUM_OUTPUT_BUCKETS);
 
             // inference
-            let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
-            let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
-            let accumulator = stm_subnet.concat(ntm_subnet);
-
-            let l1x_out = l1x.forward(accumulator).select(output_buckets);
-            let l1f_out = l1f.forward(accumulator);
-            let l1_out = (l1x_out + l1f_out).screlu();
-
-            let l2x_out = l2x.forward(l1_out).select(output_buckets);
-            let l2f_out = l2f.forward(l1_out);
-            let l2_out = (l2x_out + l2f_out).screlu();
-
-            let l3x_out = l3x.forward(l2_out).select(output_buckets);
-            let l3f_out = l3f.forward(l2_out);
-            let l3_out = l3x_out + l3f_out;
-
-            l3_out
+            let stm_hidden = l0.forward(stm_inputs).crelu().pairwise_mul();
+            let ntm_hidden = l0.forward(ntm_inputs).crelu().pairwise_mul();
+            let hl1 = stm_hidden.concat(ntm_hidden);
+            let hl2 = l1.forward(hl1).select(output_buckets).screlu();
+            let hl3 = l2.forward(hl2).select(output_buckets).screlu();
+            l3.forward(hl3).select(output_buckets)
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
     trainer.optimiser.set_params_for_weight("l0w", adamw);
     trainer.optimiser.set_params_for_weight("l0f", adamw);
-    trainer.optimiser.set_params_for_weight("l1xw", adamw);
-    trainer.optimiser.set_params_for_weight("l1xb", adamw);
-    trainer.optimiser.set_params_for_weight("l1fw", adamw);
-    trainer.optimiser.set_params_for_weight("l1fb", adamw);
+    trainer.optimiser.set_params_for_weight("l1w", adamw);
+    trainer.optimiser.set_params_for_weight("l1b", adamw);
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
-    trainer.optimiser.set_params_for_weight("l2xw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2xb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2fw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2fb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3xw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3xb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3fw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
+    trainer.optimiser.set_params_for_weight("l2w", no_clipping);
+    trainer.optimiser.set_params_for_weight("l2b", no_clipping);
+    trainer.optimiser.set_params_for_weight("l3w", no_clipping);
+    trainer.optimiser.set_params_for_weight("l3b", no_clipping);
 
     let schedule = TrainingSchedule {
         net_id: "modern".to_string(),
