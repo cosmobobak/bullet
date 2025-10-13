@@ -23,6 +23,20 @@ const CLIP: f32 = 0.99 * 2.0;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
+#[rustfmt::skip]
+const BUCKET_LAYOUT: [usize; 32] = [
+     0,  1,  2,  3,
+     4,  5,  6,  7,
+     8,  9, 10, 11,
+     8,  9, 10, 11,
+    12, 12, 13, 13,
+    12, 12, 13, 13,
+    14, 14, 15, 15,
+    14, 14, 15, 15,
+];
+
+const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
+
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/dataset.bin";
@@ -30,19 +44,6 @@ fn main() {
     let final_lr = 0.001 * f32::powi(0.3, 5);
     let superbatches = 800;
     let wdl_proportion = 0.4;
-    #[rustfmt::skip]
-    const BUCKET_LAYOUT: [usize; 32] = [
-         0,  1,  2,  3,
-         4,  5,  6,  7,
-         8,  9, 10, 11,
-         8,  9, 10, 11,
-        12, 12, 13, 13,
-        12, 12, 13, 13,
-        14, 14, 15, 15,
-        14, 14, 15, 15,
-    ];
-
-    const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
     let mut saves =
         ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
