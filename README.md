@@ -24,24 +24,26 @@ Specific API documentation is covered by Rust's docstrings. You can create local
 
 ### Constituent Crates
 
-- **bullet_core**
-    - An ML framework that is generic over backends
-    - Graphs are defined once (ahead of use), then optimsed and compiled for a given backend device
-    - A token single-threaded CPU backend is included for verifying correctness of the crate and other backend implementations
-    - See the [MNIST](examples/extra/mnist.rs) example for using `bullet_core` as a general-purpose ML framework
+- **acyclib**
+    - Core ML library for directed acyclic tensor graphs
+    - Graphs are defined once (ahead of use), then optimised and compiled for a given backend device
+    - Contains the CPU backend
+    - Contains training abstractions to take care of asynchronous data loading and transfer from CPU to GPU
+    - See the [MNIST](examples/extra/mnist.rs) example for using it at a lower level
 - **bullet_cuda_backend**
-    - A working but incomplete CUDA backend rewrite, not currently suitable for serious use
+    - The first-class backend
+    - Things that other backends don't have:
+        - Tooling to make writing custom operations easier
+        - Additional optimisation passes & better optimised kernels
+        - Multi-GPU support! See the [caveat](https://github.com/jw1912/bullet/commit/b06dd9bbbcfde9716612f0d305d1d94279a26a04) for whether bandwidth limitations will be a performance bottleneck
 - **bullet_hip_backend**
-    - Currently contains both the HIP (for AMD GPUs) and CUDA backends. Enable the `hip` feature to use the HIP backend
+    - For users with AMD GPUs
 - **bullet_lib**
     - Provides a high-level wrapper around the above crates specifically for training networks to do with chess (and other games e.g. Ataxx) easily
     - Value network training for games with `ValueTrainer`
         - The [simple](examples/simple.rs) example shows ease-of-use in training the simplest NNUE architectures
         - The [progression](examples/progression) examples show how to incrementally improve your NNUE architecture
-    - What backend is used is dictated by passed feature flags:
-        - By default the CUDA backend from `bullet_hip_backend` is used, you should not pass any feature flags if you want to use the CUDA backend
-        - Enable the `hip` feature to use the HIP backend **only** if you have an AMD card
-        - Read the [documentation](docs/2-getting-started.md#backends) for more specific instructions
+        - Read the [documentation](docs/2-getting-started.md#backends) for compilation instructions
 - **bullet-utils**
     - Various utilities mostly to do with handling chess data
 
@@ -49,4 +51,4 @@ Specific API documentation is covered by Rust's docstrings. You can create local
 
 - Please open an issue to file any bug reports/feature requests.
 - Feel free to use the dedicated `#bullet` channel in the [Engine Programming](https://discord.com/invite/F6W6mMsTGN) discord server if you run into any issues.
-- For general training discussion the Engine Programming non-`#bullet` channels are appropriate, or `#engines-dev` in the [Stockfish](https://discord.gg/GWDRS3kU6R) discord.
+- For general training discussion the Engine Programming non-`#bullet` channels are appropriate, or `#engines-dev` in the [Stockfish](https://discord.gg/GWDRS3kU6R) discord. 

@@ -1,12 +1,14 @@
 use std::marker::PhantomData;
 
-use bullet_core::{graph::builder::Shape, optimiser::Optimiser, trainer::Trainer};
+use acyclib::{
+    device::{Device, tensor::Shape},
+    graph::save::SavedFormat,
+    trainer::{Trainer, optimiser::Optimiser},
+};
 
 use crate::{
-    ExecutionContext,
     game::{inputs::SparseInputType, outputs::OutputBuckets},
-    nn::{BackendMarker, NetworkBuilder, NetworkBuilderNode, optimiser::OptimiserType},
-    trainer::save::SavedFormat,
+    nn::{BackendMarker, ExecutionContext, NetworkBuilder, NetworkBuilderNode, optimiser::OptimiserType},
     value::ValueTrainerState,
 };
 
@@ -27,6 +29,8 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     factorised: Vec<String>,
     wdl_output: bool,
     use_win_rate_model: bool,
+    print_ir: bool,
+    device_ids: Vec<<ExecutionContext as Device>::IdType>,
 }
 
 impl<O, I> Default for ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
@@ -46,6 +50,8 @@ where
             wdl_output: false,
             use_win_rate_model: false,
             factorised: Vec::new(),
+            print_ir: false,
+            device_ids: Vec::new(),
         }
     }
 }
@@ -92,6 +98,11 @@ where
         self
     }
 
+    pub fn print_ir(mut self) -> Self {
+        self.print_ir = true;
+        self
+    }
+
     pub fn wdl_adjust_function(mut self, f: B<I>) -> Self {
         self.blend_getter = f;
         self
@@ -100,6 +111,28 @@ where
     pub fn datapoint_weight_function(mut self, f: Wgt<I>) -> Self {
         assert!(self.weight_getter.is_none(), "Position weight function alrady set!");
         self.weight_getter = Some(f);
+        self
+    }
+
+    pub fn use_threads(self, _count: usize) -> Self {
+        #[cfg(feature = "cpu")]
+        {
+            self.use_devices(vec![(); _count])
+        }
+
+        #[cfg(not(feature = "cpu"))]
+        {
+            println!("Setting `ValueTrainerBuilder::use_threads` does nothing on non-CPU backends!");
+            self
+        }
+    }
+
+    pub fn use_devices(mut self, ids: impl Into<Vec<<ExecutionContext as Device>::IdType>>) -> Self {
+        if cfg!(not(any(feature = "multigpu", feature = "cpu"))) {
+            println!("Specifying device list does nothing without `multigpu` feature enabled!");
+        }
+
+        self.device_ids = ids.into();
         self
     }
 
@@ -121,7 +154,7 @@ where
         let inputs = input_getter.num_inputs();
         let nnz = input_getter.max_active();
 
-        let builder = NetworkBuilder::default();
+        let mut builder = NetworkBuilder::default();
 
         let output_size = if self.wdl_output { 3 } else { 1 };
         let targets = builder.new_dense_input("targets", Shape::new(output_size, 1));
@@ -133,6 +166,21 @@ where
         }
 
         let output_node = out.node();
+
+        #[cfg(feature = "cuda")]
+        builder.add_custom_pass(bullet_cuda_backend::ops::FuseSparseAffineActivateWithMatmul);
+
+        if self.print_ir {
+            builder.dump_ir_on_build();
+        }
+
+        #[cfg(any(feature = "multigpu", feature = "cpu"))]
+        let graph = {
+            let devices = self.device_ids.into_iter().map(ExecutionContext::new);
+            builder.build_multi(devices.collect::<Result<Vec<_>, _>>().unwrap())
+        };
+
+        #[cfg(not(any(feature = "multigpu", feature = "cpu")))]
         let graph = builder.build(ExecutionContext::default());
 
         ValueTrainer(Trainer {
@@ -142,10 +190,10 @@ where
                 output_getter: buckets,
                 blend_getter: self.blend_getter,
                 weight_getter: self.weight_getter,
-                output_node,
+                _output_node: output_node,
                 use_win_rate_model: self.use_win_rate_model,
                 wdl: self.wdl_output,
-                saved_format: saved_format.clone(),
+                saved_format,
             },
         })
     }
@@ -229,6 +277,8 @@ where
             factorised: self.factorised,
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
+            print_ir: self.print_ir,
+            device_ids: self.device_ids,
         }
     }
 }
@@ -256,6 +306,8 @@ where
             factorised: self.factorised,
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
+            print_ir: self.print_ir,
+            device_ids: self.device_ids,
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bullet_core::device::DeviceBuffer;
+use acyclib::device::DeviceBuffer;
 
 use crate::DeviceError;
 
@@ -19,6 +19,9 @@ pub struct Buffer<T: ValidType> {
     pub(super) ptr: *mut T,
     pub(super) ctx: Arc<ExecutionContext>,
 }
+
+unsafe impl<T: ValidType> Send for Buffer<T> {}
+unsafe impl<T: ValidType> Sync for Buffer<T> {}
 
 impl<T: ValidType> Drop for Buffer<T> {
     fn drop(&mut self) {

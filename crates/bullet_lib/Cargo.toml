@@ -10,25 +10,29 @@ rust-version = { workspace = true }
 edition = { workspace = true }
 
 [features]
-default = ["hip-cuda"]
+default = ["cuda"]
 cpu = []
 cuda = ["bullet_cuda_backend"]
-hip = ["bullet_hip_backend", "bullet_hip_backend/hip"]
+hip = ["bullet_hip_backend", "bullet_hip_backend/hip", "bullet_cuda_backend?/error"]
 hip-cuda = ["bullet_hip_backend"]
-gh-actions = ["bullet_hip_backend/gh-actions"]
+multigpu = ["bullet_cuda_backend/nccl"]
 
 [dependencies]
+acyclib = { workspace = true }
 bullet_cuda_backend = { workspace = true, optional = true }
 bullet_hip_backend = { workspace = true, optional = true }
-bullet_core = { workspace = true }
 bulletformat = { workspace = true }
 montyformat = { workspace = true }
-sfbinpack = "0.4.1"
-viriformat = "2.0.0"
+sfbinpack = "0.6.0"
+viriformat = { workspace = true }
 
 [[example]]
 name = "simple"
 path = "../../examples/simple.rs"
+
+[[example]]
+name = "mnist"
+path = "../../examples/extra/mnist.rs"
 
 [[example]]
 name = "test1"
@@ -37,6 +41,10 @@ path = "../../examples/tests/test1.rs"
 [[example]]
 name = "test2"
 path = "../../examples/tests/test2.rs"
+
+[[example]]
+name = "test3"
+path = "../../examples/tests/test3.rs"
 
 [[example]]
 name = "1_simple"

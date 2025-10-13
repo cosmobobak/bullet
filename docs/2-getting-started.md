@@ -40,7 +40,7 @@ Building `bullet` requires a C++ compiler (which will be invoked by `nvcc` or `h
 
 #### CUDA
 The default backend when compiling `bullet_lib`.
-- You **should not** enable any features to use this backend
+- You **should not** enable or disable any features to use this backend
 - Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
 - Recommended CUDA version >=12.2 (lower versions can work)
 - The `CUDA_PATH` environment variable must be set to the CUDA install location (should contain the `bin`, `lib` and `include` directories)
@@ -48,11 +48,16 @@ The default backend when compiling `bullet_lib`.
 
 #### HIP
 For users with AMD GPUs.
-- Enable the `hip` feature
+- Enable the `hip` feature and disable default features (e.g. `cargo r -r --example <example name> --features hip --no-default-features`)
 - Install the [HIP SDK](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/how-to/install.html)
 - The `HIP_PATH` environment variable must be set to the HIP install location (should contain the `bin`, `lib` and `include` directories)
 - The system `PATH` should contain `%HIP_PATH%\bin` (or equivalent for Linux)
 - On Linux, you will need to specify the `GCN_ARCH_NAME` environment variable, which you should be able to find using `rocminfo`.
 
 #### CPU
-If you need to train on CPU you can use the [legacy branch](https://github.com/jw1912/bullet/tree/legacy).
+- For users with no GPU AMD/NVIDIA only - **do not use CPU backend if you have a GPU** it will be so much slower
+- Enable the `cpu` feature and disable default features (e.g. `cargo r -r --example <example name> --features cpu --no-default-features`)
+- Add to `ValueTrainerBuilder` the number of threads to use with `.use_threads(<num threads>)`
+- Be conscious of how many threads you are using in total
+    - Most likely only need 1/2 threads in `LocalSettings`
+    - Binpack dataloaders may require more threads

@@ -46,20 +46,15 @@ fn main() {
         .save_format(&[
             // merge in the factoriser weights
             SavedFormat::id("l0w")
-                .add_transform(|graph, _, mut weights| {
-                    let factoriser = graph.get_weights("l0f").get_dense_vals().unwrap();
-                    let expanded = factoriser.repeat(NUM_INPUT_BUCKETS);
-
-                    for (i, &j) in weights.iter_mut().zip(expanded.iter()) {
-                        *i += j;
-                    }
-
-                    weights
+                .transform(|store, weights| {
+                    let factoriser = store.get("l0f").values.repeat(NUM_INPUT_BUCKETS);
+                    weights.into_iter().zip(factoriser).map(|(a, b)| a + b).collect()
                 })
+                .round()
                 .quantise::<i16>(255),
-            SavedFormat::id("l0b").quantise::<i16>(255),
-            SavedFormat::id("l1w").quantise::<i16>(64).transpose(),
-            SavedFormat::id("l1b").quantise::<i16>(255 * 64),
+            SavedFormat::id("l0b").round().quantise::<i16>(255),
+            SavedFormat::id("l1w").round().quantise::<i16>(64).transpose(),
+            SavedFormat::id("l1b").round().quantise::<i16>(255 * 64),
         ])
         .loss_fn(|output, target| output.sigmoid().squared_error(target))
         .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
