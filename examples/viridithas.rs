@@ -50,8 +50,8 @@ fn main() {
             .to_vec();
 
     // merge factoriser weights when saving:
-    saves[0] = saves[0].clone().add_transform(|builder, _, mut weights| {
-        let factoriser = builder.get_weights("l0f").get_dense_vals().unwrap();
+    saves[0] = saves[0].clone().transform(|builder, mut weights| {
+        let factoriser = builder.get("l0f").values;
         let expanded = factoriser.repeat(weights.len() / factoriser.len());
 
         for (i, j) in weights.iter_mut().zip(expanded.iter()) {
@@ -125,7 +125,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "modern".to_string(),
+        net_id: "vixen".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
