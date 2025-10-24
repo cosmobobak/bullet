@@ -138,11 +138,19 @@ fn main() {
 
     let dataloader = DirectSequentialDataLoader::new(&[dataset_path]);
 
-    trainer.run(&schedule, &settings, &dataloader);
+    trainer.load_from_checkpoint("checkpoints/tartarus-800");
+    dbg!(trainer.eval("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"));
+    dbg!(trainer.eval("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1"));
+    dbg!(trainer.eval("r1bq1bkr/ppp3pp/2n5/3np3/2B5/5Q2/PPPP1PPP/RNB1K2R w KQ - 2 8"));
+    dbg!(trainer.eval("r1bq1bkr/ppp3pp/2n5/3np3/2B5/5Q2/PPPP1PPP/RNB1K2R b KQ - 2 8"));
+    trainer.save_quantised("tartarus-800-resaved").unwrap();
+
+    // trainer.run(&schedule, &settings, &dataloader);
 }
 
 fn save_format() -> Vec<SavedFormat> {
-    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2w", "l2b", "l3w", "l3b"].map(SavedFormat::id).to_vec();
+    let mut saves =
+        ["l0w", "l0b", "l1w", "l1f", "l1b", "l2w", "l2f", "l2b", "l3w", "l3f", "l3b"].map(SavedFormat::id).to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -150,33 +158,6 @@ fn save_format() -> Vec<SavedFormat> {
         let expanded_l0f = l0f.repeat(weights.len() / l0f.len());
         for (i, j) in weights.iter_mut().zip(expanded_l0f.iter()) {
             *i += *j;
-        }
-        weights
-    });
-
-    saves[2] = saves[2].clone().transform(|builder, mut weights| {
-        let l1f = &builder.get("l1f").values;
-        let expanded: Vec<f32> = (0..NUM_OUTPUT_BUCKETS).flat_map(|_| l1f.iter().copied()).collect();
-        for (w, &f) in weights.iter_mut().zip(&expanded) {
-            *w += f;
-        }
-        weights
-    });
-
-    saves[4] = saves[4].clone().transform(|builder, mut weights| {
-        let l2f = &builder.get("l2f").values;
-        let expanded: Vec<f32> = (0..NUM_OUTPUT_BUCKETS).flat_map(|_| l2f.iter().copied()).collect();
-        for (w, &f) in weights.iter_mut().zip(&expanded) {
-            *w += f;
-        }
-        weights
-    });
-
-    saves[6] = saves[6].clone().transform(|builder, mut weights| {
-        let l3f = &builder.get("l3f").values;
-        let expanded: Vec<f32> = (0..NUM_OUTPUT_BUCKETS).flat_map(|_| l3f.iter().copied()).collect();
-        for (w, &f) in weights.iter_mut().zip(&expanded) {
-            *w += f;
         }
         weights
     });
