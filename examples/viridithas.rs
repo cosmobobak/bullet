@@ -15,7 +15,7 @@ use bullet_lib::{
     value::{ValueTrainerBuilder, loader::DirectSequentialDataLoader},
 };
 
-const L1: usize = 2048;
+const L1: usize = 256;
 const L2: usize = 16;
 const L3: usize = 32;
 
@@ -39,30 +39,13 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/dataset.bin";
+    let dataset_path = "data/2025-09-forward-25k-dfrc.bf";
     let initial_lr = 0.001;
     let final_lr = 0.001 * f32::powi(0.3, 5);
     let superbatches = 800;
     let wdl_proportion = 0.4;
 
-    let mut saves =
-        ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-            .map(SavedFormat::id)
-            .to_vec();
-
-    // merge factoriser weights when saving:
-    saves[0] = saves[0].clone().transform(|builder, mut weights| {
-        let factoriser = builder.get("l0f").values;
-        let expanded = factoriser.repeat(weights.len() / factoriser.len());
-
-        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
-            *i += *j;
-        }
-
-        weights
-    });
-
-    let init_normal = |input: usize| InitSettings::Normal { mean: 0.0, stdev: (2.0 / (input as f32)).sqrt() };
+    let saves = save_format();
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -83,18 +66,34 @@ fn main() {
             l0.weights = (l0.weights + expanded_l0f).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights + factorisers
-            let mut l1 = builder.new_affine("l1x", L1, NUM_OUTPUT_BUCKETS * L2);
+            let mut l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
             let l1f = builder.new_weights("l1f", Shape::new(L2, L1), InitSettings::Zeroed);
-            let mut l2 = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
+            let mut l2 = builder.new_affine("l2", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_weights("l2f", Shape::new(L3, L2), InitSettings::Zeroed);
-            let mut l3 = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
+            let mut l3 = builder.new_affine("l3", L3, NUM_OUTPUT_BUCKETS);
             let l3f = builder.new_weights("l3f", Shape::new(1, L3), InitSettings::Zeroed);
 
-            let expanded_l1f = l1f.repeat(NUM_OUTPUT_BUCKETS);
+            // repeat rows: reshape to row vec, matmul with col of ones, reshape back
+            let expanded_l1f = {
+                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &vec![1.0; NUM_OUTPUT_BUCKETS]);
+                let reshaped = l1f.reshape(Shape::new(1, L2 * L1));
+                let repeated = ones.matmul(reshaped);
+                repeated.reshape(Shape::new(NUM_OUTPUT_BUCKETS * L2, L1))
+            };
             l1.weights = (l1.weights + expanded_l1f).clip_pass_through_grad(-CLIP, CLIP);
-            let expanded_l2f = l2f.repeat(NUM_OUTPUT_BUCKETS);
+            let expanded_l2f = {
+                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &vec![1.0; NUM_OUTPUT_BUCKETS]);
+                let reshaped = l2f.reshape(Shape::new(1, L3 * L2));
+                let repeated = ones.matmul(reshaped);
+                repeated.reshape(Shape::new(NUM_OUTPUT_BUCKETS * L3, L2))
+            };
             l2.weights = l2.weights + expanded_l2f;
-            let expanded_l3f = l3f.repeat(NUM_OUTPUT_BUCKETS);
+            let expanded_l3f = {
+                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &vec![1.0; NUM_OUTPUT_BUCKETS]);
+                let reshaped = l3f.reshape(Shape::new(1, 1 * L3));
+                let repeated = ones.matmul(reshaped);
+                repeated.reshape(Shape::new(NUM_OUTPUT_BUCKETS, L3))
+            };
             l3.weights = l3.weights + expanded_l3f;
 
             // inference
@@ -111,18 +110,15 @@ fn main() {
     let adamw = AdamWParams { max_weight: 128.0, min_weight: -128.0, ..Default::default() };
     trainer.optimiser.set_params_for_weight("l0w", adamw);
     trainer.optimiser.set_params_for_weight("l0f", adamw);
-    trainer.optimiser.set_params_for_weight("l1xw", adamw);
-    trainer.optimiser.set_params_for_weight("l1xb", adamw);
-    trainer.optimiser.set_params_for_weight("l1fw", adamw);
-    trainer.optimiser.set_params_for_weight("l1fb", adamw);
-    trainer.optimiser.set_params_for_weight("l2xw", adamw);
-    trainer.optimiser.set_params_for_weight("l2xb", adamw);
-    trainer.optimiser.set_params_for_weight("l2fw", adamw);
-    trainer.optimiser.set_params_for_weight("l2fb", adamw);
-    trainer.optimiser.set_params_for_weight("l3xw", adamw);
-    trainer.optimiser.set_params_for_weight("l3xb", adamw);
-    trainer.optimiser.set_params_for_weight("l3fw", adamw);
-    trainer.optimiser.set_params_for_weight("l3fb", adamw);
+    trainer.optimiser.set_params_for_weight("l1w", adamw);
+    trainer.optimiser.set_params_for_weight("l1b", adamw);
+    trainer.optimiser.set_params_for_weight("l1f", adamw);
+    trainer.optimiser.set_params_for_weight("l2w", adamw);
+    trainer.optimiser.set_params_for_weight("l2b", adamw);
+    trainer.optimiser.set_params_for_weight("l2f", adamw);
+    trainer.optimiser.set_params_for_weight("l3w", adamw);
+    trainer.optimiser.set_params_for_weight("l3b", adamw);
+    trainer.optimiser.set_params_for_weight("l3f", adamw);
 
     let schedule = TrainingSchedule {
         net_id: "tartarus".to_string(),
@@ -143,4 +139,47 @@ fn main() {
     let dataloader = DirectSequentialDataLoader::new(&[dataset_path]);
 
     trainer.run(&schedule, &settings, &dataloader);
+}
+
+fn save_format() -> Vec<SavedFormat> {
+    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2w", "l2b", "l3w", "l3b"].map(SavedFormat::id).to_vec();
+
+    // merge factoriser weights when saving:
+    saves[0] = saves[0].clone().transform(|builder, mut weights| {
+        let l0f = builder.get("l0f").values;
+        let expanded_l0f = l0f.repeat(weights.len() / l0f.len());
+        for (i, j) in weights.iter_mut().zip(expanded_l0f.iter()) {
+            *i += *j;
+        }
+        weights
+    });
+
+    saves[2] = saves[2].clone().transform(|builder, mut weights| {
+        let l1f = &builder.get("l1f").values;
+        let expanded: Vec<f32> = (0..NUM_OUTPUT_BUCKETS).flat_map(|_| l1f.iter().copied()).collect();
+        for (w, &f) in weights.iter_mut().zip(&expanded) {
+            *w += f;
+        }
+        weights
+    });
+
+    saves[4] = saves[4].clone().transform(|builder, mut weights| {
+        let l2f = &builder.get("l2f").values;
+        let expanded: Vec<f32> = (0..NUM_OUTPUT_BUCKETS).flat_map(|_| l2f.iter().copied()).collect();
+        for (w, &f) in weights.iter_mut().zip(&expanded) {
+            *w += f;
+        }
+        weights
+    });
+
+    saves[6] = saves[6].clone().transform(|builder, mut weights| {
+        let l3f = &builder.get("l3f").values;
+        let expanded: Vec<f32> = (0..NUM_OUTPUT_BUCKETS).flat_map(|_| l3f.iter().copied()).collect();
+        for (w, &f) in weights.iter_mut().zip(&expanded) {
+            *w += f;
+        }
+        weights
+    });
+
+    saves
 }
