@@ -15,7 +15,7 @@ use bullet_lib::{
     value::{ValueTrainerBuilder, loader::DirectSequentialDataLoader},
 };
 
-const HL: usize = 2048;
+const HL: usize = 256;
 const L2: usize = 16;
 const L3: usize = 32;
 
@@ -39,7 +39,7 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/dataset.bin";
+    let dataset_path = "data/2025-09-forward-25k-dfrc.bf";
     let initial_lr = 0.001;
     let final_lr = 0.001 * f32::powi(0.3, 5);
     let superbatches = 800;
@@ -126,7 +126,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "noösphere".to_string(),
+        net_id: "sol-new".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -136,7 +136,7 @@ fn main() {
         },
         wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
         lr_scheduler: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: superbatches },
-        save_rate: 10,
+        save_rate: 400,
     };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
