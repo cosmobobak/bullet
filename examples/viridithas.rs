@@ -15,7 +15,7 @@ use bullet_lib::{
     value::{ValueTrainerBuilder, loader::DirectSequentialDataLoader},
 };
 
-const HL: usize = 2048;
+const L1: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
@@ -62,6 +62,8 @@ fn main() {
         weights
     });
 
+    let init_normal = |input: usize| InitSettings::Normal { mean: 0.0, stdev: (2.0 / (input as f32)).sqrt() };
+
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
         .optimiser(AdamW)
@@ -72,61 +74,58 @@ fn main() {
         .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
             // builder.dump_graphviz("viz.txt");
             // input layer factoriser
-            let l0f = builder.new_weights("l0f", Shape::new(HL, 768), InitSettings::Zeroed);
-            let expanded_factoriser = l0f.repeat(NUM_INPUT_BUCKETS);
+            let l0f = builder.new_weights("l0f", Shape::new(L1, 768), InitSettings::Zeroed);
+            let expanded_l0f = l0f.repeat(NUM_INPUT_BUCKETS);
 
             // input layer weights
-            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, HL);
+            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, L1);
             l0.init_with_effective_input_size(32);
-            l0.weights = l0.weights + expanded_factoriser;
+            l0.weights = (l0.weights + expanded_l0f).clip_pass_through_grad(-CLIP, CLIP);
 
-            // layerstack weights
-            let l1x = builder.new_affine("l1x", HL, NUM_OUTPUT_BUCKETS * L2);
-            let l1f = builder.new_affine("l1f", HL, L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
-            let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
-            let l3f = builder.new_affine("l3f", L3, 1);
+            // layerstack weights + factorisers
+            let mut l1 = builder.new_affine("l1x", L1, NUM_OUTPUT_BUCKETS * L2);
+            let l1f = builder.new_weights("l1f", Shape::new(L2, L1), InitSettings::Zeroed);
+            let mut l2 = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
+            let l2f = builder.new_weights("l2f", Shape::new(L3, L2), InitSettings::Zeroed);
+            let mut l3 = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
+            let l3f = builder.new_weights("l3f", Shape::new(1, L3), InitSettings::Zeroed);
+
+            let expanded_l1f = l1f.repeat(NUM_OUTPUT_BUCKETS);
+            l1.weights = (l1.weights + expanded_l1f).clip_pass_through_grad(-CLIP, CLIP);
+            let expanded_l2f = l2f.repeat(NUM_OUTPUT_BUCKETS);
+            l2.weights = l2.weights + expanded_l2f;
+            let expanded_l3f = l3f.repeat(NUM_OUTPUT_BUCKETS);
+            l3.weights = l3.weights + expanded_l3f;
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
             let accumulator = stm_subnet.concat(ntm_subnet);
 
-            let l1x_out = l1x.forward(accumulator).select(output_buckets);
-            let l1f_out = l1f.forward(accumulator);
-            let l1_out = (l1x_out + l1f_out).screlu();
+            let l1_out = l1.forward(accumulator).select(output_buckets).screlu();
+            let l2_out = l2.forward(l1_out).select(output_buckets).screlu();
 
-            let l2x_out = l2x.forward(l1_out).select(output_buckets);
-            let l2f_out = l2f.forward(l1_out);
-            let l2_out = (l2x_out + l2f_out).screlu();
-
-            let l3x_out = l3x.forward(l2_out).select(output_buckets);
-            let l3f_out = l3f.forward(l2_out);
-            let l3_out = l3x_out + l3f_out;
-
-            l3_out
+            l3.forward(l2_out).select(output_buckets)
         });
 
-    let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
+    let adamw = AdamWParams { max_weight: 128.0, min_weight: -128.0, ..Default::default() };
     trainer.optimiser.set_params_for_weight("l0w", adamw);
     trainer.optimiser.set_params_for_weight("l0f", adamw);
     trainer.optimiser.set_params_for_weight("l1xw", adamw);
     trainer.optimiser.set_params_for_weight("l1xb", adamw);
     trainer.optimiser.set_params_for_weight("l1fw", adamw);
     trainer.optimiser.set_params_for_weight("l1fb", adamw);
-    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
-    trainer.optimiser.set_params_for_weight("l2xw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2xb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2fw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2fb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3xw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3xb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3fw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
+    trainer.optimiser.set_params_for_weight("l2xw", adamw);
+    trainer.optimiser.set_params_for_weight("l2xb", adamw);
+    trainer.optimiser.set_params_for_weight("l2fw", adamw);
+    trainer.optimiser.set_params_for_weight("l2fb", adamw);
+    trainer.optimiser.set_params_for_weight("l3xw", adamw);
+    trainer.optimiser.set_params_for_weight("l3xb", adamw);
+    trainer.optimiser.set_params_for_weight("l3fw", adamw);
+    trainer.optimiser.set_params_for_weight("l3fb", adamw);
 
     let schedule = TrainingSchedule {
-        net_id: "noösphere".to_string(),
+        net_id: "tartarus".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
