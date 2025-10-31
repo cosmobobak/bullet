@@ -126,7 +126,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "stalker".to_string(),
+        net_id: "fizz".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -156,8 +156,8 @@ fn main() {
             max_eval_incorrectness: u32::MAX,
 
             // from Default::default()
-            random_fen_skipping: false,
-            random_fen_skip_probability: 0.0,
+            random_fen_skipping: true,
+            random_fen_skip_probability: 0.75,
             wdl_filtered: false,
             wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
             wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
