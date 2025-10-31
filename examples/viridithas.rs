@@ -75,22 +75,22 @@ fn main() {
 
             // repeat rows: reshape to row vec, matmul with col of ones, reshape back
             let expanded_l1f = {
-                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &vec![1.0; NUM_OUTPUT_BUCKETS]);
+                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &[1.0; NUM_OUTPUT_BUCKETS]);
                 let reshaped = l1f.reshape(Shape::new(1, L2 * L1));
                 let repeated = ones.matmul(reshaped);
                 repeated.reshape(Shape::new(NUM_OUTPUT_BUCKETS * L2, L1))
             };
             l1.weights = (l1.weights + expanded_l1f).clip_pass_through_grad(-CLIP, CLIP);
             let expanded_l2f = {
-                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &vec![1.0; NUM_OUTPUT_BUCKETS]);
+                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &[1.0; NUM_OUTPUT_BUCKETS]);
                 let reshaped = l2f.reshape(Shape::new(1, L3 * L2));
                 let repeated = ones.matmul(reshaped);
                 repeated.reshape(Shape::new(NUM_OUTPUT_BUCKETS * L3, L2))
             };
             l2.weights = l2.weights + expanded_l2f;
             let expanded_l3f = {
-                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &vec![1.0; NUM_OUTPUT_BUCKETS]);
-                let reshaped = l3f.reshape(Shape::new(1, 1 * L3));
+                let ones = builder.new_constant(Shape::new(NUM_OUTPUT_BUCKETS, 1), &[1.0; NUM_OUTPUT_BUCKETS]);
+                let reshaped = l3f.reshape(Shape::new(1, L3));
                 let repeated = ones.matmul(reshaped);
                 repeated.reshape(Shape::new(NUM_OUTPUT_BUCKETS, L3))
             };
@@ -149,16 +149,50 @@ fn main() {
 }
 
 fn save_format() -> Vec<SavedFormat> {
-    let mut saves =
-        ["l0w", "l0b", "l1w", "l1f", "l1b", "l2w", "l2f", "l2b", "l3w", "l3f", "l3b"].map(SavedFormat::id).to_vec();
+    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2w", "l2b", "l3w", "l3b"].map(SavedFormat::id).to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
-        let l0f = builder.get("l0f").values;
-        let expanded_l0f = l0f.repeat(weights.len() / l0f.len());
-        for (i, j) in weights.iter_mut().zip(expanded_l0f.iter()) {
+        let factoriser = builder.get("l0f").values;
+        let expanded = factoriser.repeat(weights.len() / factoriser.len());
+
+        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
             *i += *j;
         }
+
+        weights
+    });
+
+    saves[2] = saves[2].clone().transform(|builder, mut weights| {
+        let factoriser = builder.get("l1f").values;
+        let expanded = factoriser.repeat(weights.len() / factoriser.len());
+
+        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
+            *i += *j;
+        }
+
+        weights
+    });
+
+    saves[4] = saves[4].clone().transform(|builder, mut weights| {
+        let factoriser = builder.get("l2f").values;
+        let expanded = factoriser.repeat(weights.len() / factoriser.len());
+
+        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
+            *i += *j;
+        }
+
+        weights
+    });
+
+    saves[6] = saves[6].clone().transform(|builder, mut weights| {
+        let factoriser = builder.get("l3f").values;
+        let expanded = factoriser.repeat(weights.len() / factoriser.len());
+
+        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
+            *i += *j;
+        }
+
         weights
     });
 
