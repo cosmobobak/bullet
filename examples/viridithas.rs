@@ -126,7 +126,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "crackle".to_string(),
+        net_id: "pop".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -144,7 +144,7 @@ fn main() {
     // let dataloader = DirectSequentialDataLoader::new(&[dataset_path]);
     let dataloader = ViriBinpackLoader::new(
         dataset_path,
-        512,
+        16384,
         6,
         viriformat::dataformat::Filter {
             min_ply: 16,
