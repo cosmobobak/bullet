@@ -12,7 +12,7 @@ use bullet_lib::{
         schedule::{TrainingSchedule, TrainingSteps, lr, wdl},
         settings::LocalSettings,
     },
-    value::{ValueTrainerBuilder, loader::ViriBinpackLoader},
+    value::ValueTrainerBuilder,
 };
 
 const HL: usize = 256;
@@ -39,7 +39,7 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/2025-01-forward.vf";
+    let dataset_path = "data/2025-01-forward.bf";
     let initial_lr = 0.001;
     let final_lr = 0.001 * f32::powi(0.3, 5);
     let superbatches = 800;
@@ -126,7 +126,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "dagger".to_string(),
+        net_id: "vega".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -144,32 +144,32 @@ fn main() {
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
 
-    // let dataloader = DirectSequentialDataLoader::new(&[dataset_path]);
-    let dataloader = ViriBinpackLoader::new(
-        dataset_path,
-        4096,
-        16,
-        viriformat::dataformat::Filter {
-            min_ply: 16,
-            min_pieces: 4,
-            max_eval: 20_000,
-            filter_tactical: true,
-            filter_check: true,
-            filter_castling: false,
-            max_eval_incorrectness: u32::MAX,
+    let dataloader = bullet_lib::value::loader::DirectSequentialDataLoader::new(&[dataset_path]);
+    // let dataloader = ViriBinpackLoader::new(
+    //     dataset_path,
+    //     4096,
+    //     16,
+    //     viriformat::dataformat::Filter {
+    //         min_ply: 16,
+    //         min_pieces: 4,
+    //         max_eval: 20_000,
+    //         filter_tactical: true,
+    //         filter_check: true,
+    //         filter_castling: false,
+    //         max_eval_incorrectness: u32::MAX,
 
-            // from Default::default()
-            random_fen_skipping: true,
-            random_fen_skip_probability: 5.0 / 6.0,
-            wdl_filtered: false,
-            wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
-            wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
-            material_min: 17,
-            material_max: 78,
-            mom_target: 58,
-            wdl_heuristic_scale: 1.5,
-        },
-    );
+    //         // from Default::default()
+    //         random_fen_skipping: true,
+    //         random_fen_skip_probability: 5.0 / 6.0,
+    //         wdl_filtered: false,
+    //         wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
+    //         wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
+    //         material_min: 17,
+    //         material_max: 78,
+    //         mom_target: 58,
+    //         wdl_heuristic_scale: 1.5,
+    //     },
+    // );
 
     trainer.run(&schedule, &settings, &dataloader);
 }

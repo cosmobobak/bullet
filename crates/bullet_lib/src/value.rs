@@ -143,6 +143,7 @@ where
                     error_record.borrow_mut().push((superbatch, curr_batch, prev32_loss));
 
                     prev32_loss = 0.0;
+                    ticks_since_last = 0.0;
                 }
             },
             |trainer, superbatch| {
