@@ -43,7 +43,7 @@ fn main() {
     let initial_lr = 0.0005;
     let final_lr = initial_lr * f32::powi(0.3, 5);
     let superbatches = 200;
-    let wdl_proportion = 1.0;
+    let wdl_proportion = 0.4;
 
     let mut saves =
         ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
