@@ -15,7 +15,7 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-const HL: usize = 256;
+const HL: usize = 2048;
 const L2: usize = 16;
 const L3: usize = 32;
 
@@ -39,18 +39,6 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/all.vf";
-    let schedule = lr::Warmup {
-        inner: lr::Sequence {
-            first: lr::ConstantLR { value: 0.001 },
-            first_scheduler_final_superbatch: 600,
-            second: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 200 },
-        },
-        warmup_batches: 1600,
-    };
-    let superbatches = 800;
-    let wdl_proportion = 0.4;
-
     let mut saves =
         ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
             .map(SavedFormat::id)
@@ -131,50 +119,81 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
-    let schedule = TrainingSchedule {
-        net_id: "hailstorm".to_string(),
+    let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
+
+    let filter = viriformat::dataformat::Filter {
+        min_ply: 16,
+        min_pieces: 4,
+        max_eval: 20_000,
+        filter_tactical: true,
+        filter_check: true,
+        filter_castling: false,
+        max_eval_incorrectness: u32::MAX,
+
+        // from Default::default()
+        random_fen_skipping: true,
+        random_fen_skip_probability: 9.0 / 10.0,
+        wdl_filtered: false,
+        wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
+        wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
+        material_min: 17,
+        material_max: 78,
+        mom_target: 58,
+        wdl_heuristic_scale: 1.5,
+    };
+
+    // trainer.load_from_checkpoint("checkpoints/haruspex-800");
+
+    let schedule1 = TrainingSchedule {
+        net_id: "logos".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
             start_superbatch: 1,
-            end_superbatch: superbatches,
+            end_superbatch: 800,
         },
-        wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
-        lr_scheduler: schedule,
+        wdl_scheduler: wdl::LinearWDL { start: 0.15, end: 0.6 },
+        lr_scheduler: lr::Warmup {
+            inner: lr::Sequence {
+                first: lr::ConstantLR { value: 0.001 },
+                first_scheduler_final_superbatch: 600,
+                second: lr::CosineDecayLR {
+                    initial_lr: 0.001,
+                    final_lr: 0.001 * 0.3 * 0.3 * 0.3,
+                    final_superbatch: 200,
+                },
+            },
+            warmup_batches: 1600,
+        },
         save_rate: 400,
     };
 
-    let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
+    let dataloader1 = bullet_lib::value::loader::ViriBinpackLoader::new("data/all.vf", 4096, 16, filter.clone());
 
-    // let dataloader = bullet_lib::value::loader::DirectSequentialDataLoader::new(&[dataset_path]);
-    let dataloader = bullet_lib::value::loader::ViriBinpackLoader::new(
-        dataset_path,
-        4096,
-        16,
-        viriformat::dataformat::Filter {
-            min_ply: 16,
-            min_pieces: 4,
-            max_eval: 20_000,
-            filter_tactical: true,
-            filter_check: true,
-            filter_castling: false,
-            max_eval_incorrectness: u32::MAX,
+    trainer.run(&schedule1, &settings, &dataloader1);
 
-            // from Default::default()
-            random_fen_skipping: true,
-            random_fen_skip_probability: 5.0 / 6.0,
-            wdl_filtered: false,
-            wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
-            wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
-            material_min: 17,
-            material_max: 78,
-            mom_target: 58,
-            wdl_heuristic_scale: 1.5,
+    drop(dataloader1);
+
+    let schedule2 = TrainingSchedule {
+        net_id: "logos-finetuned".to_string(),
+        eval_scale: 400.0,
+        steps: TrainingSteps {
+            batch_size: 16_384,
+            batches_per_superbatch: 6104,
+            start_superbatch: 1,
+            end_superbatch: 800,
         },
-    );
+        wdl_scheduler: wdl::ConstantWDL { value: 1.0 },
+        lr_scheduler: lr::CosineDecayLR {
+            initial_lr: 0.000025,
+            final_lr: 0.000025 * 0.3 * 0.3 * 0.3,
+            final_superbatch: 400,
+        },
+        save_rate: 400,
+    };
 
-    trainer.load_from_checkpoint("checkpoints/haruspex-800");
+    let dataloader2 = bullet_lib::value::loader::ViriBinpackLoader::new("data/2025-01-forward.vf", 4096, 16, filter);
 
-    trainer.run(&schedule, &settings, &dataloader);
+    trainer.run(&schedule2, &settings, &dataloader2);
 }
