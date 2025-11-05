@@ -39,10 +39,16 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/2025-01-forward.bf";
-    let initial_lr = 0.0005;
-    let final_lr = initial_lr * f32::powi(0.3, 5);
-    let superbatches = 200;
+    let dataset_path = "data/all.vf";
+    let schedule = lr::Warmup {
+        inner: lr::Sequence {
+            first: lr::ConstantLR { value: 0.001 },
+            first_scheduler_final_superbatch: 600,
+            second: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 200 },
+        },
+        warmup_batches: 1600,
+    };
+    let superbatches = 800;
     let wdl_proportion = 0.4;
 
     let mut saves =
@@ -126,7 +132,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "radiant".to_string(),
+        net_id: "hailstorm".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -135,41 +141,38 @@ fn main() {
             end_superbatch: superbatches,
         },
         wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
-        lr_scheduler: lr::Warmup {
-            inner: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: superbatches },
-            warmup_batches: 1600,
-        },
+        lr_scheduler: schedule,
         save_rate: 400,
     };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
 
-    let dataloader = bullet_lib::value::loader::DirectSequentialDataLoader::new(&[dataset_path]);
-    // let dataloader = bullet_lib::value::loader::ViriBinpackLoader::new(
-    //     dataset_path,
-    //     4096,
-    //     16,
-    //     viriformat::dataformat::Filter {
-    //         min_ply: 16,
-    //         min_pieces: 4,
-    //         max_eval: 20_000,
-    //         filter_tactical: true,
-    //         filter_check: true,
-    //         filter_castling: false,
-    //         max_eval_incorrectness: u32::MAX,
+    // let dataloader = bullet_lib::value::loader::DirectSequentialDataLoader::new(&[dataset_path]);
+    let dataloader = bullet_lib::value::loader::ViriBinpackLoader::new(
+        dataset_path,
+        4096,
+        16,
+        viriformat::dataformat::Filter {
+            min_ply: 16,
+            min_pieces: 4,
+            max_eval: 20_000,
+            filter_tactical: true,
+            filter_check: true,
+            filter_castling: false,
+            max_eval_incorrectness: u32::MAX,
 
-    //         // from Default::default()
-    //         random_fen_skipping: true,
-    //         random_fen_skip_probability: 5.0 / 6.0,
-    //         wdl_filtered: false,
-    //         wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
-    //         wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
-    //         material_min: 17,
-    //         material_max: 78,
-    //         mom_target: 58,
-    //         wdl_heuristic_scale: 1.5,
-    //     },
-    // );
+            // from Default::default()
+            random_fen_skipping: true,
+            random_fen_skip_probability: 5.0 / 6.0,
+            wdl_filtered: false,
+            wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
+            wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
+            material_min: 17,
+            material_max: 78,
+            mom_target: 58,
+            wdl_heuristic_scale: 1.5,
+        },
+    );
 
     trainer.load_from_checkpoint("checkpoints/haruspex-800");
 
