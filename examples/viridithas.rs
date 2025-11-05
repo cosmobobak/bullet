@@ -15,7 +15,7 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-const HL: usize = 2048;
+const HL: usize = 256;
 const L2: usize = 16;
 const L3: usize = 32;
 
