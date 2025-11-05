@@ -132,7 +132,7 @@ fn main() {
 
         // from Default::default()
         random_fen_skipping: true,
-        random_fen_skip_probability: 9.0 / 10.0,
+        random_fen_skip_probability: 5.0 / 6.0,
         wdl_filtered: false,
         wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
         wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
