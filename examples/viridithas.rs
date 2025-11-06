@@ -41,11 +41,7 @@ fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
     let schedule = lr::Warmup {
-        inner: lr::Sequence {
-            first: lr::ConstantLR { value: 0.001 },
-            first_scheduler_final_superbatch: 600,
-            second: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 200 },
-        },
+        inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 800 },
         warmup_batches: 1600,
     };
     let superbatches = 800;
@@ -84,7 +80,7 @@ fn main() {
             // input layer weights
             let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, HL);
             l0.init_with_effective_input_size(32);
-            l0.weights = l0.weights + expanded_factoriser;
+            l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
             let l1x = builder.new_affine("l1x", HL, NUM_OUTPUT_BUCKETS * L2);
@@ -115,13 +111,13 @@ fn main() {
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
-    trainer.optimiser.set_params_for_weight("l0w", adamw);
-    trainer.optimiser.set_params_for_weight("l0f", adamw);
     trainer.optimiser.set_params_for_weight("l1xw", adamw);
     trainer.optimiser.set_params_for_weight("l1xb", adamw);
     trainer.optimiser.set_params_for_weight("l1fw", adamw);
     trainer.optimiser.set_params_for_weight("l1fb", adamw);
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
+    trainer.optimiser.set_params_for_weight("l0w", no_clipping);
+    trainer.optimiser.set_params_for_weight("l0f", no_clipping);
     trainer.optimiser.set_params_for_weight("l2xw", no_clipping);
     trainer.optimiser.set_params_for_weight("l2xb", no_clipping);
     trainer.optimiser.set_params_for_weight("l2fw", no_clipping);
@@ -132,7 +128,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "hailstorm".to_string(),
+        net_id: "harmonic".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -174,7 +170,7 @@ fn main() {
         },
     );
 
-    trainer.load_from_checkpoint("checkpoints/haruspex-800");
+    // trainer.load_from_checkpoint("checkpoints/haruspex-800");
 
     trainer.run(&schedule, &settings, &dataloader);
 }
