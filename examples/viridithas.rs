@@ -182,7 +182,7 @@ fn main() {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
             start_superbatch: 1,
-            end_superbatch: 800,
+            end_superbatch: 400,
         },
         wdl_scheduler: wdl::ConstantWDL { value: 1.0 },
         lr_scheduler: lr::CosineDecayLR {
