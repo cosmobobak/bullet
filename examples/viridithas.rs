@@ -41,7 +41,7 @@ fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
     let schedule = lr::Warmup {
-        inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3 * 0.3 * 0.3, final_superbatch: 800 },
+        inner: lr::LinearDecayLR { initial_lr: 0.001, final_lr: 0.0, final_superbatch: 800 },
         warmup_batches: 1600,
     };
     let superbatches = 800;
@@ -128,7 +128,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "harmonic".to_string(),
+        net_id: "locke".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
