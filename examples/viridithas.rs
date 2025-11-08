@@ -41,10 +41,10 @@ fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
     let schedule = lr::Warmup {
-        inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * f32::powi(0.3, 3), final_superbatch: 800 },
+        inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * f32::powi(0.3, 5), final_superbatch: 800 * 3 },
         warmup_batches: 1600,
     };
-    let superbatches = 800;
+    let superbatches = 800 * 3;
     let wdl_proportion = 0.4;
 
     let mut saves =
@@ -105,9 +105,8 @@ fn main() {
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
-            let l3_out = l3x_out + l3f_out;
 
-            l3_out
+            l3x_out + l3f_out
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
@@ -128,7 +127,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "slate".to_string(),
+        net_id: "hadamard".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -138,7 +137,7 @@ fn main() {
         },
         wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
         lr_scheduler: schedule,
-        save_rate: 400,
+        save_rate: 10000,
     };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
