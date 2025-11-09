@@ -89,8 +89,8 @@ fn main() {
             // let l1f = builder.new_affine("l1f", HL, L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
-            let l3f = builder.new_affine("l3f", L3, 1);
+            let l3x = builder.new_affine("l3x", L3 + L2, NUM_OUTPUT_BUCKETS);
+            let l3f = builder.new_affine("l3f", L3 + L2, 1);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
@@ -104,6 +104,9 @@ fn main() {
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = (l2x_out + l2f_out).screlu();
+
+            // skip connection!
+            let l2_out = l2_out.concat(l1_out);
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -129,7 +132,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "elessar".to_string(),
+        net_id: "rubicon".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
