@@ -41,16 +41,18 @@ fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
     let schedule = lr::Warmup {
-        inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * f32::powi(0.3, 5), final_superbatch: 800 * 3 },
+        inner: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * f32::powi(0.3, 5), final_superbatch: 800 },
         warmup_batches: 1600,
     };
-    let superbatches = 800 * 3;
+    let superbatches = 800;
     let wdl_proportion = 0.4;
 
-    let mut saves =
-        ["l0w", "l0b", "l1xw", "l1fw", "l1xb", "l1fb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-            .map(SavedFormat::id)
-            .to_vec();
+    let mut saves = [
+        "l0w", "l0b", "l1xw", /*"l1fw",*/ "l1xb", /*"l1fb",*/ "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw",
+        "l3xb", "l3fb",
+    ]
+    .map(SavedFormat::id)
+    .to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -84,7 +86,7 @@ fn main() {
 
             // layerstack weights
             let l1x = builder.new_affine("l1x", HL, NUM_OUTPUT_BUCKETS * L2);
-            let l1f = builder.new_affine("l1f", HL, L2);
+            // let l1f = builder.new_affine("l1f", HL, L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_affine("l2f", L2, L3);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
@@ -96,8 +98,8 @@ fn main() {
             let accumulator = stm_subnet.concat(ntm_subnet);
 
             let l1x_out = l1x.forward(accumulator).select(output_buckets);
-            let l1f_out = l1f.forward(accumulator);
-            let l1_out = (l1x_out + l1f_out).screlu();
+            // let l1f_out = l1f.forward(accumulator);
+            let l1_out = (l1x_out/* + l1f_out */).screlu();
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
@@ -112,8 +114,8 @@ fn main() {
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
     trainer.optimiser.set_params_for_weight("l1xw", adamw);
     trainer.optimiser.set_params_for_weight("l1xb", adamw);
-    trainer.optimiser.set_params_for_weight("l1fw", adamw);
-    trainer.optimiser.set_params_for_weight("l1fb", adamw);
+    // trainer.optimiser.set_params_for_weight("l1fw", adamw);
+    // trainer.optimiser.set_params_for_weight("l1fb", adamw);
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
     trainer.optimiser.set_params_for_weight("l0w", no_clipping);
     trainer.optimiser.set_params_for_weight("l0f", no_clipping);
@@ -127,7 +129,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "hadamard".to_string(),
+        net_id: "elessar".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
