@@ -17,7 +17,7 @@ use bullet_lib::{
 
 const HL: usize = 256;
 const L2: usize = 16;
-const L3: usize = 32;
+const L3: usize = 64;
 
 const CLIP: f32 = 0.99 * 2.0;
 
@@ -47,12 +47,9 @@ fn main() {
     let superbatches = 800;
     let wdl_proportion = 0.4;
 
-    let mut saves = [
-        "l0w", "l0b", "l1xw", /*"l1fw",*/ "l1xb", /*"l1fb",*/ "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw",
-        "l3xb", "l3fb",
-    ]
-    .map(SavedFormat::id)
-    .to_vec();
+    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+        .map(SavedFormat::id)
+        .to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -85,28 +82,22 @@ fn main() {
             l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
-            let l1x = builder.new_affine("l1x", HL, NUM_OUTPUT_BUCKETS * L2);
-            // let l1f = builder.new_affine("l1f", HL, L2);
+            let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3 + L2, NUM_OUTPUT_BUCKETS);
-            let l3f = builder.new_affine("l3f", L3 + L2, 1);
+            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
+            let l3f = builder.new_affine("l3f", L3, 1);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
             let accumulator = stm_subnet.concat(ntm_subnet);
 
-            let l1x_out = l1x.forward(accumulator).select(output_buckets);
-            // let l1f_out = l1f.forward(accumulator);
-            let l1_out = (l1x_out/* + l1f_out */).screlu();
+            let l1_out = l1.forward(accumulator).select(output_buckets).screlu();
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = (l2x_out + l2f_out).screlu();
-
-            // skip connection!
-            let l2_out = l2_out.concat(l1_out);
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -115,10 +106,8 @@ fn main() {
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
-    trainer.optimiser.set_params_for_weight("l1xw", adamw);
-    trainer.optimiser.set_params_for_weight("l1xb", adamw);
-    // trainer.optimiser.set_params_for_weight("l1fw", adamw);
-    // trainer.optimiser.set_params_for_weight("l1fb", adamw);
+    trainer.optimiser.set_params_for_weight("l1w", adamw);
+    trainer.optimiser.set_params_for_weight("l1b", adamw);
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
     trainer.optimiser.set_params_for_weight("l0w", no_clipping);
     trainer.optimiser.set_params_for_weight("l0f", no_clipping);
@@ -132,7 +121,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "rubicon".to_string(),
+        net_id: "muscle".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
