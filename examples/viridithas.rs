@@ -17,7 +17,7 @@ use bullet_lib::{
 
 const HL: usize = 256;
 const L2: usize = 16;
-const L3: usize = 64;
+const L3: usize = 32;
 
 const CLIP: f32 = 0.99 * 2.0;
 
@@ -83,21 +83,27 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
-            let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
-            let l3f = builder.new_affine("l3f", L3, 1);
+            let l2x = builder.new_affine("l2x", L2 * 2, NUM_OUTPUT_BUCKETS * L3);
+            let l2f = builder.new_affine("l2f", L2 * 2, L3);
+            let l3x = builder.new_affine("l3x", L3 * 2, NUM_OUTPUT_BUCKETS);
+            let l3f = builder.new_affine("l3f", L3 * 2, 1);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
             let accumulator = stm_subnet.concat(ntm_subnet);
 
-            let l1_out = l1.forward(accumulator).select(output_buckets).screlu();
+            let l1_out = l1.forward(accumulator).select(output_buckets);
+            let l1_out_screlu = l1_out.screlu();
+            let l1_out_clipsq = l1_out.abs_pow(2.0).crelu();
+            let l1_out = l1_out_screlu.concat(l1_out_clipsq);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = (l2x_out + l2f_out).screlu();
+            let l2_out_screlu = l2_out.screlu();
+            let l2_out_clipsq = l2_out.abs_pow(2.0).crelu();
+            let l2_out = l2_out_screlu.concat(l2_out_clipsq);
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -121,7 +127,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "muscle".to_string(),
+        net_id: "delta".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
