@@ -100,7 +100,7 @@ fn main() {
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
-            let l2_out = (l2x_out + l2f_out).screlu();
+            let l2_out = l2x_out + l2f_out;
             let l2_out_screlu = l2_out.screlu();
             let l2_out_clipsq = l2_out.abs_pow(2.0).crelu();
             let l2_out = l2_out_screlu.concat(l2_out_clipsq);
@@ -127,7 +127,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "delta".to_string(),
+        net_id: "brackish".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
