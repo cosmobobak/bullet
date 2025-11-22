@@ -15,7 +15,7 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-const HL: usize = 2048;
+const HL: usize = 256;
 const L2: usize = 16;
 const L3: usize = 32;
 
@@ -40,8 +40,8 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.0005;
-    let superbatches = 200;
+    let initial_lr = 0.001;
+    let superbatches = 800;
     let schedule = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
@@ -50,7 +50,6 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    let wdl_proportion = 0.4;
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -125,50 +124,51 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
-    let schedule = TrainingSchedule {
-        net_id: "hapax-finetuned-correctly".to_string(),
-        eval_scale: 400.0,
-        steps: TrainingSteps {
-            batch_size: 16_384,
-            batches_per_superbatch: 6104,
-            start_superbatch: 1,
-            end_superbatch: superbatches,
-        },
-        wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
-        lr_scheduler: schedule,
-        save_rate: 10000,
-    };
+    for wdl_proportion in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0] {
+        let schedule = TrainingSchedule {
+            net_id: format!("lambda-{wdl_proportion}"),
+            eval_scale: 400.0,
+            steps: TrainingSteps {
+                batch_size: 16_384,
+                batches_per_superbatch: 6104,
+                start_superbatch: 1,
+                end_superbatch: superbatches,
+            },
+            wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
+            lr_scheduler: schedule.clone(),
+            save_rate: 10000,
+        };
 
-    let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
+        let settings =
+            LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
 
-    // let dataloader = bullet_lib::value::loader::DirectSequentialDataLoader::new(&[dataset_path]);
-    let dataloader = bullet_lib::value::loader::ViriBinpackLoader::new(
-        dataset_path,
-        4096,
-        16,
-        viriformat::dataformat::Filter {
-            min_ply: 16,
-            min_pieces: 4,
-            max_eval: 20_000,
-            filter_tactical: true,
-            filter_check: true,
-            filter_castling: false,
-            max_eval_incorrectness: u32::MAX,
+        // let dataloader = bullet_lib::value::loader::DirectSequentialDataLoader::new(&[dataset_path]);
+        let dataloader = bullet_lib::value::loader::ViriBinpackLoader::new(
+            dataset_path,
+            4096,
+            16,
+            viriformat::dataformat::Filter {
+                min_ply: 16,
+                min_pieces: 4,
+                max_eval: 20_000,
+                filter_tactical: true,
+                filter_check: true,
+                filter_castling: false,
+                max_eval_incorrectness: u32::MAX,
 
-            // from Default::default()
-            random_fen_skipping: true,
-            random_fen_skip_probability: 5.0 / 6.0,
-            wdl_filtered: false,
-            wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
-            wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
-            material_min: 17,
-            material_max: 78,
-            mom_target: 58,
-            wdl_heuristic_scale: 1.5,
-        },
-    );
+                // from Default::default()
+                random_fen_skipping: true,
+                random_fen_skip_probability: 5.0 / 6.0,
+                wdl_filtered: false,
+                wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
+                wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
+                material_min: 17,
+                material_max: 78,
+                mom_target: 58,
+                wdl_heuristic_scale: 1.5,
+            },
+        );
 
-    trainer.load_from_checkpoint("checkpoints/hapax-800");
-
-    trainer.run(&schedule, &settings, &dataloader);
+        trainer.run(&schedule, &settings, &dataloader);
+    }
 }
