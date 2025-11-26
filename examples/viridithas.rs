@@ -40,9 +40,9 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.0005;
-    let superbatches = 200;
-    let schedule = lr::Warmup {
+    let initial_lr = 0.001;
+    let superbatches = 800;
+    let lr_scheduler = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
             final_lr: initial_lr * f32::powi(0.3, 5),
@@ -50,7 +50,7 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    let wdl_proportion = 0.4;
+    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -126,7 +126,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "hapax-finetuned-correctly".to_string(),
+        net_id: "sovereign".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -134,8 +134,8 @@ fn main() {
             start_superbatch: 1,
             end_superbatch: superbatches,
         },
-        wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
-        lr_scheduler: schedule,
+        wdl_scheduler,
+        lr_scheduler,
         save_rate: 10000,
     };
 
@@ -168,7 +168,7 @@ fn main() {
         },
     );
 
-    trainer.load_from_checkpoint("checkpoints/hapax-800");
+    // trainer.load_from_checkpoint("checkpoints/hapax-800");
 
     trainer.run(&schedule, &settings, &dataloader);
 }
