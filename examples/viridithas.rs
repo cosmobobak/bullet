@@ -69,13 +69,13 @@ fn main() {
     });
 
     let mut trainer = ValueTrainerBuilder::default()
+        .wdl_output()
+        .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
         .optimiser(AdamW)
-        .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .save_format(&saves)
-        .loss_fn(|output, target| output.sigmoid().squared_error(target))
-        .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
+        .build_custom(|builder, (stm_inputs, ntm_inputs, output_buckets), targets| {
             // builder.dump_graphviz("viz.txt");
             // input layer factoriser
             let l0f = builder.new_weights("l0f", Shape::new(HL, 768), InitSettings::Zeroed);
@@ -90,8 +90,8 @@ fn main() {
             let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS);
-            let l3f = builder.new_affine("l3f", L3, 1);
+            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * 3);
+            let l3f = builder.new_affine("l3f", L3, 3);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
@@ -107,7 +107,12 @@ fn main() {
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
 
-            l3x_out + l3f_out
+            let out = l3x_out + l3f_out;
+
+            let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
+            let loss = ones.matmul(out.softmax_crossentropy_loss(targets));
+
+            (out, loss)
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
@@ -126,7 +131,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "sovereign".to_string(),
+        net_id: "anaphora".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
