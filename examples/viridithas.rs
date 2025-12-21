@@ -15,9 +15,10 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-const HL: usize = 2048;
+const HL: usize = 2560;
 const L2: usize = 16;
 const L3: usize = 32;
+const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
 
@@ -69,12 +70,29 @@ fn main() {
     });
 
     let mut trainer = ValueTrainerBuilder::default()
-        .wdl_output()
+        // .wdl_output()
         .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
         .optimiser(AdamW)
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .save_format(&saves)
+        // .wdl_adjust_function(|pos, _wdl| {
+        //     let mut antiphase = 0;
+        //     for (piece, _) in pos.into_iter() {
+        //         antiphase += match piece & 7 {
+        //             0 => 1,
+        //             1 | 2 => 4,
+        //             3 => 6,
+        //             4 => 12,
+        //             5 => 0,
+        //             _ => panic!(),
+        //         };
+        //     }
+        //     let phase = 96 - i32::min(96, antiphase);
+        //     let phase = phase as f32 / 96.0;
+        //     // phase * phase   ← what wonders lie in distant past, hidden in the towers of witches
+        //     0.4 + 0.6 * phase
+        // })
         .build_custom(|builder, (stm_inputs, ntm_inputs, output_buckets), targets| {
             // builder.dump_graphviz("viz.txt");
             // input layer factoriser
@@ -90,8 +108,8 @@ fn main() {
             let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * 3);
-            let l3f = builder.new_affine("l3f", L3, 3);
+            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
+            let l3f = builder.new_affine("l3f", L3, HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
@@ -109,8 +127,10 @@ fn main() {
 
             let out = l3x_out + l3f_out;
 
-            let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-            let loss = ones.matmul(out.softmax_crossentropy_loss(targets));
+            // let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
+            // let loss = ones.matmul(out.softmax_crossentropy_loss(targets));
+
+            let loss = out.sigmoid().squared_error(targets);
 
             (out, loss)
         });
@@ -131,7 +151,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "anaphora".to_string(),
+        net_id: "inimical".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
@@ -162,7 +182,7 @@ fn main() {
 
             // from Default::default()
             random_fen_skipping: true,
-            random_fen_skip_probability: 5.0 / 6.0,
+            random_fen_skip_probability: 9.0 / 10.0,
             wdl_filtered: false,
             wdl_model_params_a: [6.871_558_62, -39.652_263_91, 90.684_603_52, 170.669_963_64],
             wdl_model_params_b: [-7.198_907_10, 56.139_471_85, -139.910_911_83, 182.810_074_27],
