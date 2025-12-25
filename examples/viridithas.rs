@@ -40,7 +40,7 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/all.vf";
+    let dataset_path = "data/all-relabelled-v2.vf";
     let initial_lr = 0.001;
     let superbatches = 800;
     let lr_scheduler = lr::Warmup {
@@ -151,7 +151,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "inimical".to_string(),
+        net_id: "equilibrium".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
