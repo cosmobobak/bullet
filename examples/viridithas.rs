@@ -1,8 +1,5 @@
 use bullet_lib::{
-    game::{
-        inputs::{ChessBucketsMirrored, get_num_buckets},
-        outputs::MaterialCount,
-    },
+    game::inputs::{ChessBucketsMirrored, get_num_buckets},
     nn::{
         InitSettings, Shape,
         optimiser::{AdamW, AdamWParams},
@@ -22,8 +19,6 @@ const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
 
-const NUM_OUTPUT_BUCKETS: usize = 8;
-
 #[rustfmt::skip]
 const BUCKET_LAYOUT: [usize; 32] = [
      0,  1,  2,  3,
@@ -40,7 +35,7 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/all-relabelled-v3.vf";
+    let dataset_path = "data/all.vf";
     let initial_lr = 0.001;
     let superbatches = 800;
     let lr_scheduler = lr::Warmup {
@@ -53,9 +48,7 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-        .map(SavedFormat::id)
-        .to_vec();
+    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2w", "l2b", "l3w", "l3b"].map(SavedFormat::id).to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -74,7 +67,7 @@ fn main() {
         .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
         .optimiser(AdamW)
-        .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
+        // .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .save_format(&saves)
         // .wdl_adjust_function(|pos, _wdl| {
         //     let mut antiphase = 0;
@@ -93,7 +86,7 @@ fn main() {
         //     // phase * phase   ← what wonders lie in distant past, hidden in the towers of witches
         //     0.4 + 0.6 * phase
         // })
-        .build_custom(|builder, (stm_inputs, ntm_inputs, output_buckets), targets| {
+        .build_custom(|builder, (stm_inputs, ntm_inputs), targets| {
             // builder.dump_graphviz("viz.txt");
             // input layer factoriser
             let l0f = builder.new_weights("l0f", Shape::new(HL, 768), InitSettings::Zeroed);
@@ -105,34 +98,25 @@ fn main() {
             l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
-            let l2f = builder.new_affine("l2f", L2, L3);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
-            let l3f = builder.new_affine("l3f", L3, HEADS);
+            let l1 = builder.new_affine("l1", HL, L2);
+            let l2 = builder.new_affine("l2", L2, L3);
+            let l3 = builder.new_affine("l3", L3, HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
             let accumulator = stm_subnet.concat(ntm_subnet);
 
-            let l1_out = l1.forward(accumulator).select(output_buckets).screlu();
-
-            let l2x_out = l2x.forward(l1_out).select(output_buckets);
-            let l2f_out = l2f.forward(l1_out);
-            let l2_out = (l2x_out + l2f_out).screlu();
-
-            let l3x_out = l3x.forward(l2_out).select(output_buckets);
-            let l3f_out = l3f.forward(l2_out);
-
-            let out = l3x_out + l3f_out;
+            let l1_out = l1.forward(accumulator).screlu();
+            let l2_out = l2.forward(l1_out).screlu();
+            let l3_out = l3.forward(l2_out);
 
             // let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
             // let loss = ones.matmul(out.softmax_crossentropy_loss(targets));
 
-            let loss = out.sigmoid().squared_error(targets);
+            let loss = l3_out.sigmoid().squared_error(targets);
 
-            (out, loss)
+            (l3_out, loss)
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
@@ -141,17 +125,13 @@ fn main() {
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
     trainer.optimiser.set_params_for_weight("l0w", no_clipping);
     trainer.optimiser.set_params_for_weight("l0f", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2xw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2xb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2fw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l2fb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3xw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3xb", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3fw", no_clipping);
-    trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
+    trainer.optimiser.set_params_for_weight("l2w", no_clipping);
+    trainer.optimiser.set_params_for_weight("l2b", no_clipping);
+    trainer.optimiser.set_params_for_weight("l3w", no_clipping);
+    trainer.optimiser.set_params_for_weight("l3b", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "voltarine".to_string(),
+        net_id: "synchrony".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
