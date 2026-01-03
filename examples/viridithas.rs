@@ -24,6 +24,8 @@ const CLIP: f32 = 0.99 * 2.0;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
+const BATCH_GLOM: usize = 4;
+
 #[rustfmt::skip]
 const BUCKET_LAYOUT: [usize; 32] = [
      0,  1,  2,  3,
@@ -40,9 +42,9 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/all-relabelled-v3.vf";
-    let initial_lr = 0.001;
-    let superbatches = 800;
+    let dataset_path = "data/all.vf";
+    let initial_lr = 0.000025;
+    let superbatches = 400;
     let lr_scheduler = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
@@ -51,7 +53,7 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
+    let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -151,11 +153,11 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "voltarine".to_string(),
+        net_id: "noumena".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
-            batch_size: 16_384,
-            batches_per_superbatch: 6104,
+            batch_size: 16_384 * BATCH_GLOM,
+            batches_per_superbatch: 6104 / BATCH_GLOM,
             start_superbatch: 1,
             end_superbatch: superbatches,
         },
@@ -193,7 +195,7 @@ fn main() {
         },
     );
 
-    // trainer.load_from_checkpoint("checkpoints/hapax-800");
+    trainer.load_from_checkpoint("checkpoints/inimical-800");
 
     trainer.run(&schedule, &settings, &dataloader);
 }
