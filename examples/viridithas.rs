@@ -1,3 +1,5 @@
+use acyclib::graph::builder::GraphBuilderNode;
+use bullet_cuda_backend::CudaMarker;
 use bullet_lib::{
     game::{
         inputs::{ChessBucketsMirrored, get_num_buckets},
@@ -18,13 +20,11 @@ use bullet_lib::{
 const HL: usize = 2560;
 const L2: usize = 16;
 const L3: usize = 32;
-const HEADS: usize = 1;
+const HEADS: usize = 3;
 
 const CLIP: f32 = 0.99 * 2.0;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
-
-const BATCH_GLOM: usize = 4;
 
 #[rustfmt::skip]
 const BUCKET_LAYOUT: [usize; 32] = [
@@ -40,11 +40,13 @@ const BUCKET_LAYOUT: [usize; 32] = [
 
 const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
+const BATCH_GLOM: usize = 4;
+
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.000025;
-    let superbatches = 400;
+    let initial_lr = 0.001;
+    let superbatches = 800;
     let lr_scheduler = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
@@ -53,7 +55,7 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
+    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -72,29 +74,12 @@ fn main() {
     });
 
     let mut trainer = ValueTrainerBuilder::default()
-        // .wdl_output()
+        .wdl_output()
         .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
         .optimiser(AdamW)
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .save_format(&saves)
-        // .wdl_adjust_function(|pos, _wdl| {
-        //     let mut antiphase = 0;
-        //     for (piece, _) in pos.into_iter() {
-        //         antiphase += match piece & 7 {
-        //             0 => 1,
-        //             1 | 2 => 4,
-        //             3 => 6,
-        //             4 => 12,
-        //             5 => 0,
-        //             _ => panic!(),
-        //         };
-        //     }
-        //     let phase = 96 - i32::min(96, antiphase);
-        //     let phase = phase as f32 / 96.0;
-        //     // phase * phase   ← what wonders lie in distant past, hidden in the towers of witches
-        //     0.4 + 0.6 * phase
-        // })
         .build_custom(|builder, (stm_inputs, ntm_inputs, output_buckets), targets| {
             // builder.dump_graphviz("viz.txt");
             // input layer factoriser
@@ -127,14 +112,57 @@ fn main() {
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
 
-            let out = l3x_out + l3f_out;
+            let l3_out = l3x_out + l3f_out;
 
-            // let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-            // let loss = ones.matmul(out.softmax_crossentropy_loss(targets));
+            // -------- MSE --------
+            let loss_mask = builder.new_constant(Shape::new(1, 3), &[1.0, 0.0, 0.0]);
+            let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
+            let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
 
-            let loss = out.sigmoid().squared_error(targets);
+            let loss = loss_mask.matmul(l3_out);
+            let draw = draw_mask.matmul(l3_out);
+            let win = win_mask.matmul(l3_out);
 
-            (out, loss)
+            // Strange way to do a max() operation
+            fn maximum<'a>(
+                x: GraphBuilderNode<'a, CudaMarker>,
+                y: GraphBuilderNode<'a, CudaMarker>,
+            ) -> GraphBuilderNode<'a, CudaMarker> {
+                (x - y).relu() + y
+            }
+            let max = maximum(loss, maximum(draw, win));
+
+            // Strange way to do an exp() operation
+            fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
+                let sigmoid = x.sigmoid();
+                let inv_sigmoid = sigmoid.abs_pow(-1.0);
+                let e_minus_x = inv_sigmoid - 1.0;
+                e_minus_x.abs_pow(-1.0)
+            }
+            let loss = exp(loss - max);
+            let draw = exp(draw - max);
+            let win = exp(win - max);
+
+            let inv_sum = (win + draw + loss).abs_pow(-1.0);
+            let win = win * inv_sum;
+            let draw = draw * inv_sum;
+
+            // Calculate score from target
+            let target_draw = draw_mask.matmul(targets);
+            let target_win = win_mask.matmul(targets);
+            let target_value = 0.5 * target_draw + target_win;
+
+            // Calculate MSE loss
+            let mse_result = (draw * 0.5 + win).crelu(); // .clamp(0.0, 1.0)
+            let mse_loss = mse_result.squared_error(target_value);
+
+            // -------- CE --------
+            let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
+            let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
+
+            let final_loss = mse_loss + 0.1 * ce_loss;
+
+            (l3_out, final_loss)
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
@@ -153,7 +181,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "noumena".to_string(),
+        net_id: "hyperphor".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -195,7 +223,7 @@ fn main() {
         },
     );
 
-    trainer.load_from_checkpoint("checkpoints/inimical-800");
+    // trainer.load_from_checkpoint("checkpoints/hapax-800");
 
     trainer.run(&schedule, &settings, &dataloader);
 }
