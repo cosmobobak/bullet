@@ -45,8 +45,8 @@ const BATCH_GLOM: usize = 4;
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.001;
-    let superbatches = 800;
+    let initial_lr = 0.000025;
+    let superbatches = 400;
     let lr_scheduler = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
@@ -55,7 +55,8 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
+    // let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
+    let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -74,7 +75,7 @@ fn main() {
     });
 
     let mut trainer = ValueTrainerBuilder::default()
-        .wdl_output()
+        .full_output()
         .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
         .optimiser(AdamW)
@@ -123,22 +124,8 @@ fn main() {
             let draw = draw_mask.matmul(l3_out);
             let win = win_mask.matmul(l3_out);
 
-            // Strange way to do a max() operation
-            fn maximum<'a>(
-                x: GraphBuilderNode<'a, CudaMarker>,
-                y: GraphBuilderNode<'a, CudaMarker>,
-            ) -> GraphBuilderNode<'a, CudaMarker> {
-                (x - y).relu() + y
-            }
             let max = maximum(loss, maximum(draw, win));
 
-            // Strange way to do an exp() operation
-            fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
-                let sigmoid = x.sigmoid();
-                let inv_sigmoid = sigmoid.abs_pow(-1.0);
-                let e_minus_x = inv_sigmoid - 1.0;
-                e_minus_x.abs_pow(-1.0)
-            }
             let loss = exp(loss - max);
             let draw = exp(draw - max);
             let win = exp(win - max);
@@ -148,9 +135,8 @@ fn main() {
             let draw = draw * inv_sum;
 
             // Calculate score from target
-            let target_draw = draw_mask.matmul(targets);
-            let target_win = win_mask.matmul(targets);
-            let target_value = 0.5 * target_draw + target_win;
+            let target_value = targets.slice_rows(0, 1);
+            let targets = targets.slice_rows(1, 4);
 
             // Calculate MSE loss
             let mse_result = (draw * 0.5 + win).crelu(); // .clamp(0.0, 1.0)
@@ -181,7 +167,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "hyperphor".to_string(),
+        net_id: "goibniu-finetune".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -223,7 +209,21 @@ fn main() {
         },
     );
 
-    // trainer.load_from_checkpoint("checkpoints/hapax-800");
+    trainer.load_from_checkpoint("checkpoints/goibniu-800");
 
     trainer.run(&schedule, &settings, &dataloader);
+}
+
+fn maximum<'a>(
+    x: GraphBuilderNode<'a, CudaMarker>,
+    y: GraphBuilderNode<'a, CudaMarker>,
+) -> GraphBuilderNode<'a, CudaMarker> {
+    (x - y).relu() + y
+}
+
+fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
+    let sigmoid = x.sigmoid();
+    let inv_sigmoid = sigmoid.abs_pow(-1.0);
+    let e_minus_x = inv_sigmoid - 1.0;
+    e_minus_x.abs_pow(-1.0)
 }

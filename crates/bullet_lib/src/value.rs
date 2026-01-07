@@ -26,7 +26,7 @@ use crate::{
     },
     value::{
         dataloader::ValueDataLoader,
-        loader::{DefaultDataLoader, LoadableDataType},
+        loader::{DefaultDataLoader, LoadableDataType, TargetType},
     },
 };
 
@@ -75,7 +75,7 @@ pub struct ValueTrainerState<Inp: SparseInputType, Out> {
     output_node: Node,
     saved_format: Vec<SavedFormat>,
     use_win_rate_model: bool,
-    wdl: bool,
+    wdl: TargetType,
 }
 
 impl<Inp: SparseInputType, Out> ValueTrainerState<Inp, Out>
