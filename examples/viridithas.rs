@@ -19,8 +19,8 @@ use bullet_lib::{
 
 const HL: usize = 2560;
 const L2: usize = 16;
-const L3: usize = 128;
-const HEADS: usize = 3;
+const L3: usize = 32;
+const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
 
@@ -45,8 +45,8 @@ const BATCH_GLOM: usize = 4;
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.000025;
-    let superbatches = 400;
+    let initial_lr = 0.001;
+    let superbatches = 800;
     let lr_scheduler = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
@@ -55,8 +55,8 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    // let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
-    let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
+    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
+    // let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -75,7 +75,7 @@ fn main() {
     });
 
     let mut trainer = ValueTrainerBuilder::default()
-        .full_output()
+        // .full_output()
         .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
         .optimiser(AdamW)
@@ -104,51 +104,63 @@ fn main() {
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
             let accumulator = stm_subnet.concat(ntm_subnet);
 
-            let l1_out = l1.forward(accumulator).select(output_buckets).screlu();
+            let l1_out = l1.forward(accumulator).select(output_buckets);
+            // activate with Hard-Swish, act(x) = x * clamp(x + 0.5, 0, 1)
+            let gate = (l1_out + 0.5).crelu();
+            let l1_out = l1_out * gate;
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
-            let l2_out = (l2x_out + l2f_out).screlu();
+            let l2_out = l2x_out + l2f_out;
+            // activate with Hard-Swish, act(x) = x * clamp(x + 0.5, 0, 1)
+            let gate = (l2_out + 0.5).crelu();
+            let l2_out = l2_out * gate;
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
 
             let l3_out = l3x_out + l3f_out;
 
-            // -------- MSE --------
-            let loss_mask = builder.new_constant(Shape::new(1, 3), &[1.0, 0.0, 0.0]);
-            let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
-            let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
+            if HEADS == 3 {
+                // -------- MSE --------
+                let loss_mask = builder.new_constant(Shape::new(1, 3), &[1.0, 0.0, 0.0]);
+                let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
+                let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
 
-            let loss = loss_mask.matmul(l3_out);
-            let draw = draw_mask.matmul(l3_out);
-            let win = win_mask.matmul(l3_out);
+                let loss = loss_mask.matmul(l3_out);
+                let draw = draw_mask.matmul(l3_out);
+                let win = win_mask.matmul(l3_out);
 
-            let max = maximum(loss, maximum(draw, win));
+                let max = maximum(loss, maximum(draw, win));
 
-            let loss = exp(loss - max);
-            let draw = exp(draw - max);
-            let win = exp(win - max);
+                let loss = exp(loss - max);
+                let draw = exp(draw - max);
+                let win = exp(win - max);
 
-            let inv_sum = (win + draw + loss).abs_pow(-1.0);
-            let win = win * inv_sum;
-            let draw = draw * inv_sum;
+                let inv_sum = (win + draw + loss).abs_pow(-1.0);
+                let win = win * inv_sum;
+                let draw = draw * inv_sum;
 
-            // Calculate score from target
-            let target_value = targets.slice_rows(0, 1);
-            let targets = targets.slice_rows(1, 4);
+                // Calculate score from target
+                let target_value = targets.slice_rows(0, 1);
+                let targets = targets.slice_rows(1, 4);
 
-            // Calculate MSE loss
-            let mse_result = (draw * 0.5 + win).crelu(); // .clamp(0.0, 1.0)
-            let mse_loss = mse_result.squared_error(target_value);
+                // Calculate MSE loss
+                let mse_result = (draw * 0.5 + win).crelu(); // .clamp(0.0, 1.0)
+                let mse_loss = mse_result.squared_error(target_value);
 
-            // -------- CE --------
-            let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-            let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
+                // -------- CE --------
+                let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
+                let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
 
-            let final_loss = mse_loss + 0.1 * ce_loss;
+                let loss = mse_loss + 0.1 * ce_loss;
 
-            (l3_out, final_loss)
+                (l3_out, loss)
+            } else {
+                let loss = l3_out.sigmoid().squared_error(targets);
+
+                (l3_out, loss)
+            }
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
@@ -167,7 +179,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "ornament-finetune".to_string(),
+        net_id: "flourish".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -209,7 +221,7 @@ fn main() {
         },
     );
 
-    trainer.load_from_checkpoint("checkpoints/ornament-800");
+    // trainer.load_from_checkpoint("checkpoints/ornament-800");
 
     trainer.run(&schedule, &settings, &dataloader);
 }
