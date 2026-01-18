@@ -105,16 +105,12 @@ fn main() {
             let accumulator = stm_subnet.concat(ntm_subnet);
 
             let l1_out = l1.forward(accumulator).select(output_buckets);
-            // activate with Hard-Swish, act(x) = x * clamp(x + 0.5, 0, 1)
-            let gate = (l1_out + 0.5).crelu();
-            let l1_out = l1_out * gate;
+            let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = l2x_out + l2f_out;
-            // activate with Hard-Swish, act(x) = x * clamp(x + 0.5, 0, 1)
-            let gate = (l2_out + 0.5).crelu();
-            let l2_out = l2_out * gate;
+            let l2_out = hard_swish(l2_out);
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -179,7 +175,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "flourish".to_string(),
+        net_id: "flounce".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -238,4 +234,9 @@ fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> 
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
     let e_minus_x = inv_sigmoid - 1.0;
     e_minus_x.abs_pow(-1.0)
+}
+
+fn hard_swish(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
+    let relu6 = ((x + 3.0) / 6.0).crelu() * 6.0;
+    x * relu6 / 6.0
 }
