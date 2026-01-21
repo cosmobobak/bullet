@@ -17,7 +17,7 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-const HL: usize = 2560;
+const L1: usize = 2560;
 const L2: usize = 16;
 const L3: usize = 32;
 const HEADS: usize = 1;
@@ -84,16 +84,16 @@ fn main() {
         .build_custom(|builder, (stm_inputs, ntm_inputs, output_buckets), targets| {
             // builder.dump_graphviz("viz.txt");
             // input layer factoriser
-            let l0f = builder.new_weights("l0f", Shape::new(HL, 768), InitSettings::Zeroed);
+            let l0f = builder.new_weights("l0f", Shape::new(L1, 768), InitSettings::Zeroed);
             let expanded_factoriser = l0f.repeat(NUM_INPUT_BUCKETS);
 
             // input layer weights
-            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, HL);
+            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, L1);
             l0.init_with_effective_input_size(32);
             l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", HL, NUM_OUTPUT_BUCKETS * L2);
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
             let l2f = builder.new_affine("l2f", L2, L3);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
@@ -102,9 +102,13 @@ fn main() {
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
-            let accumulator = stm_subnet.concat(ntm_subnet);
+            let l0_out = stm_subnet.concat(ntm_subnet);
 
-            let l1_out = l1.forward(accumulator).select(output_buckets);
+            // L₁-norm penalty on accumulator:
+            let ones_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
+            let l0_out_norm = ones_l1_vec.matmul(l0_out);
+
+            let l1_out = l1.forward(l0_out).select(output_buckets);
             let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
@@ -151,9 +155,13 @@ fn main() {
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
+                let loss = loss + 0.001 * l0_out_norm;
+
                 (l3_out, loss)
             } else {
                 let loss = l3_out.sigmoid().squared_error(targets);
+
+                let loss = loss + 0.001 * l0_out_norm;
 
                 (l3_out, loss)
             }
@@ -175,7 +183,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "flounce-finetune".to_string(),
+        net_id: "flounce-finetune-ftreg".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
