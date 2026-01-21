@@ -45,8 +45,8 @@ const BATCH_GLOM: usize = 4;
 fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.000025;
-    let superbatches = 400;
+    let initial_lr = 0.001;
+    let superbatches = 800;
     let lr_scheduler = lr::Warmup {
         inner: lr::CosineDecayLR {
             initial_lr,
@@ -55,8 +55,8 @@ fn main() {
         },
         warmup_batches: 1600,
     };
-    // let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
-    let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
+    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
+    // let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
 
     let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
         .map(SavedFormat::id)
@@ -155,13 +155,13 @@ fn main() {
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
-                let loss = loss + 0.001 * l0_out_norm;
+                let loss = loss + 0.005 * l0_out_norm;
 
                 (l3_out, loss)
             } else {
                 let loss = l3_out.sigmoid().squared_error(targets);
 
-                let loss = loss + 0.001 * l0_out_norm;
+                let loss = loss + 0.005 * l0_out_norm;
 
                 (l3_out, loss)
             }
@@ -183,7 +183,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "flounce-finetune-ftreg".to_string(),
+        net_id: "flout".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -225,7 +225,7 @@ fn main() {
         },
     );
 
-    trainer.load_from_checkpoint("checkpoints/flounce-800");
+    // trainer.load_from_checkpoint("checkpoints/flounce-800");
 
     trainer.run(&schedule, &settings, &dataloader);
 }
