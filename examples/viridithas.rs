@@ -94,8 +94,8 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3);
-            let l2f = builder.new_affine("l2f", L2, L3);
+            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
+            let l2f = builder.new_affine("l2f", L2, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
 
@@ -114,7 +114,10 @@ fn main() {
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = l2x_out + l2f_out;
-            let l2_out = hard_swish(l2_out);
+            // SwiGLU: l2_out = W₁x · Swish(W₂x)
+            let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
+            let l2_ident = l2_out.slice_rows(L3, L3 * 2);
+            let l2_out = l2_swish * l2_ident;
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -183,7 +186,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "flout".to_string(),
+        net_id: "influx".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
