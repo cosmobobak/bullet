@@ -58,9 +58,10 @@ fn main() {
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
     // let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
 
-    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-        .map(SavedFormat::id)
-        .to_vec();
+    let mut saves =
+        ["l0w", "l0b", "l1aw", "l1ab", "l1bw", "l1bb", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+            .map(SavedFormat::id)
+            .to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -93,24 +94,34 @@ fn main() {
             l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
-            let l2f = builder.new_affine("l2f", L2, L3 * 2);
+            let l1a = builder.new_affine("l1a", L1 / 2, NUM_OUTPUT_BUCKETS * L2);
+            let l1b = builder.new_affine("l1b", L1 / 2, NUM_OUTPUT_BUCKETS * L2);
+            let l2x = builder.new_affine("l2x", L2 * 2, NUM_OUTPUT_BUCKETS * L3 * 2);
+            let l2f = builder.new_affine("l2f", L2 * 2, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
 
-            // inference
+            // L0 inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
             let l0_out = stm_subnet.concat(ntm_subnet);
 
-            // L₁-norm penalty on accumulator:
+            // l₁-norm penalty on accumulator:
             let ones_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
-            let l1_out = l1.forward(l0_out).select(output_buckets);
+            // mildly tricky re-indexing
+            let l0_out_quandrants = [0, 1, 2, 3].map(|i| l0_out.slice_rows(L1 / 4 * i, L1 / 4 * (i + 1)));
+            let l0_out_a = l0_out_quandrants[0].concat(l0_out_quandrants[2]);
+            let l0_out_b = l0_out_quandrants[1].concat(l0_out_quandrants[3]);
+
+            // L1 forward
+            let l1_out_a = l1a.forward(l0_out_a).select(output_buckets);
+            let l1_out_b = l1b.forward(l0_out_b).select(output_buckets);
+            let l1_out = l1_out_a.concat(l1_out_b);
             let l1_out = hard_swish(l1_out);
 
+            // L2 forward
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = l2x_out + l2f_out;
@@ -119,11 +130,12 @@ fn main() {
             let l2_ident = l2_out.slice_rows(L3, L3 * 2);
             let l2_out = l2_swish * l2_ident;
 
+            // L3 forward
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
-
             let l3_out = l3x_out + l3f_out;
 
+            // L3 loss computation
             if HEADS == 3 {
                 // -------- MSE --------
                 let loss_mask = builder.new_constant(Shape::new(1, 3), &[1.0, 0.0, 0.0]);
@@ -171,8 +183,10 @@ fn main() {
         });
 
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
-    trainer.optimiser.set_params_for_weight("l1w", adamw);
-    trainer.optimiser.set_params_for_weight("l1b", adamw);
+    trainer.optimiser.set_params_for_weight("l1aw", adamw);
+    trainer.optimiser.set_params_for_weight("l1ab", adamw);
+    trainer.optimiser.set_params_for_weight("l1bw", adamw);
+    trainer.optimiser.set_params_for_weight("l1bb", adamw);
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
     trainer.optimiser.set_params_for_weight("l0w", no_clipping);
     trainer.optimiser.set_params_for_weight("l0f", no_clipping);
@@ -186,7 +200,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "influx".to_string(),
+        net_id: "torrent".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -196,7 +210,7 @@ fn main() {
         },
         wdl_scheduler,
         lr_scheduler,
-        save_rate: 10000,
+        save_rate: 10,
     };
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
