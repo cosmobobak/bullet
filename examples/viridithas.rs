@@ -58,24 +58,9 @@ fn main() {
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
     // let wdl_scheduler = wdl::ConstantWDL { value: 1.0 };
 
-    let mut saves = [
-        "l0w",
-        "l0b",
-        "l1w",
-        "l1b",
-        "l2xw",
-        "l2fw",
-        "l2xb",
-        "l2fb",
-        "l3xw",
-        "l3fw",
-        "l3xb",
-        "l3fb",
-        "swish_beta_l1",
-        "swish_beta_l2",
-    ]
-    .map(SavedFormat::id)
-    .to_vec();
+    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+        .map(SavedFormat::id)
+        .to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -114,17 +99,6 @@ fn main() {
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
 
-            let swish_beta_l1 = builder.new_weights(
-                "swish_beta_l1",
-                Shape::new(L2, 1),
-                InitSettings::Normal { mean: 1.0 / 6.0, stdev: 0.1 },
-            );
-            let swish_beta_l2 = builder.new_weights(
-                "swish_beta_l2",
-                Shape::new(L3, 1),
-                InitSettings::Normal { mean: 1.0 / 6.0, stdev: 0.1 },
-            );
-
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
@@ -135,13 +109,13 @@ fn main() {
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
-            let l1_out = hard_swish(l1_out, swish_beta_l1);
+            let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
             let l2_out = l2x_out + l2f_out;
             // SwiGLU: l2_out = W₁x · Swish(W₂x)
-            let l2_swish = hard_swish(l2_out.slice_rows(0, L3), swish_beta_l2);
+            let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
             let l2_ident = l2_out.slice_rows(L3, L3 * 2);
             let l2_out = l2_swish * l2_ident;
 
@@ -188,7 +162,7 @@ fn main() {
 
                 (l3_out, loss)
             } else {
-                let loss = l3_out.sigmoid().squared_error(targets);
+                let loss = l3_out.squared_error(targets);
 
                 let loss = loss + 0.005 * l0_out_norm;
 
@@ -210,11 +184,9 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3xb", no_clipping);
     trainer.optimiser.set_params_for_weight("l3fw", no_clipping);
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
-    trainer.optimiser.set_params_for_weight("swish_beta_l1", no_clipping);
-    trainer.optimiser.set_params_for_weight("swish_beta_l2", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "lorentz".to_string(),
+        net_id: "keratectomy".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -275,12 +247,7 @@ fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> 
     e_minus_x.abs_pow(-1.0)
 }
 
-fn hard_swish<'a>(
-    x: GraphBuilderNode<'a, CudaMarker>,
-    beta: GraphBuilderNode<'a, CudaMarker>,
-) -> GraphBuilderNode<'a, CudaMarker> {
-    // Broadcast beta to have batch dimension: beta_batched = x + beta - x
-    let beta_batched = x + beta - x;
-    let gate = (x * beta_batched + 0.5).crelu();
-    x * gate
+fn hard_swish(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
+    let relu6 = ((x + 3.0) / 6.0).crelu() * 6.0;
+    x * relu6 / 6.0
 }
