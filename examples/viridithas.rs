@@ -24,7 +24,7 @@ const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
 
-const NUM_OUTPUT_BUCKETS: usize = 8;
+const NUM_OUTPUT_BUCKETS: usize = 16;
 
 #[rustfmt::skip]
 const BUCKET_LAYOUT: [usize; 32] = [
@@ -162,7 +162,7 @@ fn main() {
 
                 (l3_out, loss)
             } else {
-                let loss = l3_out.squared_error(targets);
+                let loss = l3_out.sigmoid().squared_error(targets);
 
                 let loss = loss + 0.005 * l0_out_norm;
 
@@ -186,7 +186,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "keratectomy".to_string(),
+        net_id: "disunity".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
