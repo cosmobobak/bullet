@@ -17,6 +17,162 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
+use acyclib::{
+    dag::NodeId,
+    device::function::{self, DeviceFunction},
+    graph::{
+        Graph, GraphNodeIdTy,
+        ir::{
+            BackendMarker, GraphIR, GraphIRError,
+            node::AnnotatedNode,
+            operation::{GraphIROperationBase, GraphIROperationCompilable, GraphIROperationError, util},
+        },
+    },
+};
+use bullet_cuda_backend::{
+    CudaDevice,
+    kernel::{Expr, Kernel, KernelArgs, KernelInput},
+};
+
+#[derive(Debug)]
+struct BCELogitsLoss {
+    logits: AnnotatedNode,
+    target: AnnotatedNode,
+}
+
+impl<B: BackendMarker> GraphIROperationBase<B> for BCELogitsLoss {
+    fn nodes(&self) -> Vec<AnnotatedNode> {
+        vec![self.logits, self.target]
+    }
+
+    fn output_shape(&self, ir: &GraphIR<B>) -> Result<Shape, GraphIRError> {
+        util::check_same_batching(ir, &[&self.logits, &self.target])?;
+        util::check_dense_eq(ir, &self.logits, true)?;
+        util::check_dense_eq(ir, &self.target, true)?;
+
+        if self.logits.shape == self.target.shape {
+            Ok(self.logits.shape)
+        } else {
+            Err(GraphIRError::Op(GraphIROperationError::MismatchedInputShapes(vec![
+                self.logits.shape,
+                self.target.shape,
+            ])))
+        }
+    }
+}
+
+impl GraphIROperationCompilable<CudaMarker> for BCELogitsLoss {
+    fn forward_pass(&self, graph: &Graph<CudaDevice>, output_node: NodeId) -> DeviceFunction<CudaDevice> {
+        let logits = graph.get_ref(self.logits.idx, GraphNodeIdTy::Values);
+        let target = graph.get_ref(self.target.idx, GraphNodeIdTy::Values);
+        let output = graph.get_ref(output_node, GraphNodeIdTy::Values);
+
+        let mut func = DeviceFunction::default();
+
+        func.push(function::MaybeUpdateBatchSize { input: logits.clone(), output: output.clone() });
+
+        let code = "
+            __device__ float ln_sigmoid(float x) {{
+                return x >= 0.0 ? -logf(1.0 + expf(-x)) : x - logf(1.0 + expf(x));
+            }}
+
+            extern \"C\" __global__ void kernel(const int size, const float* logits, const float* target, float* output)
+            {{
+                const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+                if (tid < size)
+                {{
+                    const float inp = logits[tid];
+                    const float tar = target[tid];
+
+                    output[tid] = tar == 0.0f
+                        ? -ln_sigmoid(-inp)
+                        : tar == 1.0f
+                            ? -ln_sigmoid(inp)
+                            : tar * (logf(tar) - ln_sigmoid(inp)) + (1.0 - tar) * (logf(1.0 - tar) - ln_sigmoid(-inp));
+                }}
+            }}";
+
+        let threads = Expr::Const(512);
+        let size = Expr::Var * logits.single_size() as i32;
+        let blocks = (size.clone() + threads.clone() - 1) / threads.clone();
+        let grid_dim = [blocks, Expr::Const(1), Expr::Const(1)];
+        let block_dim = [threads, Expr::Const(1), Expr::Const(1)];
+
+        let layout = None;
+        let batched = logits.batch_size().is_some();
+        let shape = logits.shape();
+        let inputs = vec![
+            KernelInput::Size(size),
+            KernelInput::Slice { slice: logits, layout, mutable: false, batched, shape },
+            KernelInput::Slice { slice: target, layout, mutable: false, batched, shape },
+            KernelInput::Slice { slice: output, layout, mutable: true, batched, shape },
+        ];
+
+        let args = KernelArgs { grid_dim, block_dim, shared_mem_bytes: Expr::Const(0), inputs };
+
+        let kernel = unsafe { Kernel::new("BCELogitsLossFwd".to_string(), code.into(), args) };
+
+        func.push(kernel.unwrap());
+
+        func
+    }
+
+    fn backward_pass(&self, graph: &Graph<CudaDevice>, output_node: NodeId) -> DeviceFunction<CudaDevice> {
+        let logits = graph.get_ref(self.logits.idx, GraphNodeIdTy::Values);
+        let target = graph.get_ref(self.target.idx, GraphNodeIdTy::Values);
+        let output_grad = graph.get_ref(output_node, GraphNodeIdTy::Gradients);
+
+        let mut func = DeviceFunction::default();
+
+        if let Some(input_grad) = graph.maybe_get_ref(self.logits.idx, GraphNodeIdTy::Gradients) {
+            func.push(function::MaybeUpdateBatchSize { input: output_grad.clone(), output: input_grad.clone() });
+
+            let code = "
+                extern \"C\" __global__ void kernel(const int size, const float* logits, const float* target, const float* ogrd, float* igrd)
+                {{
+                    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+                    if (tid < size)
+                    {{
+                        const float sig = 1.0f / (1.0f + expf(-logits[tid]));
+                        const float tar = target[tid];
+                        igrd[tid] += ogrd[tid] * (-tar * (1.0 - sig) + (1.0 - tar) * sig);
+                    }}
+                }}";
+
+            let threads = Expr::Const(512);
+            let size = Expr::Var * logits.single_size() as i32;
+            let blocks = (size.clone() + threads.clone() - 1) / threads.clone();
+            let grid_dim = [blocks, Expr::Const(1), Expr::Const(1)];
+            let block_dim = [threads, Expr::Const(1), Expr::Const(1)];
+
+            let layout = None;
+            let batched = logits.batch_size().is_some();
+            let shape = logits.shape();
+            let inputs = vec![
+                KernelInput::Size(size),
+                KernelInput::Slice { slice: logits, layout, mutable: false, batched, shape },
+                KernelInput::Slice { slice: target, layout, mutable: false, batched, shape },
+                KernelInput::Slice { slice: output_grad, layout, mutable: false, batched, shape },
+                KernelInput::Slice { slice: input_grad, layout, mutable: true, batched, shape },
+            ];
+
+            let args = KernelArgs { grid_dim, block_dim, shared_mem_bytes: Expr::Const(0), inputs };
+
+            let kernel = unsafe { Kernel::new("BCELogitsLossFwd".to_string(), code.into(), args) };
+
+            func.push(kernel.unwrap());
+        }
+
+        if graph.maybe_get_ref(self.target.idx, GraphNodeIdTy::Gradients).is_some() {
+            panic!("Unsupported!");
+        }
+
+        func
+    }
+}
+
 const L1: usize = 2560;
 const L2: usize = 16;
 const L3: usize = 32;
@@ -24,7 +180,7 @@ const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
 
-const NUM_OUTPUT_BUCKETS: usize = 16;
+const NUM_OUTPUT_BUCKETS: usize = 8;
 
 #[rustfmt::skip]
 const BUCKET_LAYOUT: [usize; 32] = [
@@ -162,7 +318,8 @@ fn main() {
 
                 (l3_out, loss)
             } else {
-                let loss = l3_out.sigmoid().squared_error(targets);
+                let loss =
+                    builder.apply(BCELogitsLoss { logits: l3_out.annotated_node(), target: targets.annotated_node() });
 
                 let loss = loss + 0.005 * l0_out_norm;
 
@@ -186,7 +343,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "disunity".to_string(),
+        net_id: "klang".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
