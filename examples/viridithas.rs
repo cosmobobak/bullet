@@ -174,7 +174,7 @@ impl GraphIROperationCompilable<CudaMarker> for BCELogitsLoss {
 }
 
 const L1: usize = 2560;
-const L2: usize = 16;
+const L2: usize = 32;
 const L3: usize = 32;
 const HEADS: usize = 1;
 
@@ -318,8 +318,9 @@ fn main() {
 
                 (l3_out, loss)
             } else {
-                let loss =
-                    builder.apply(BCELogitsLoss { logits: l3_out.annotated_node(), target: targets.annotated_node() });
+                // let loss =
+                //     builder.apply(BCELogitsLoss { logits: l3_out.annotated_node(), target: targets.annotated_node() });
+                let loss = l3_out.sigmoid().squared_error(targets);
 
                 let loss = loss + 0.005 * l0_out_norm;
 
@@ -343,7 +344,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "klang".to_string(),
+        net_id: "interflow".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
