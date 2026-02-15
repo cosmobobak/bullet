@@ -200,7 +200,7 @@ const BATCH_GLOM: usize = 4;
 
 fn main() {
     // hyperparams to fiddle with
-    let dataset_path = "data/all.vf";
+    let dataset_path = "data/all-next.vf";
     let initial_lr = 0.001;
     let superbatches = 800;
     let lr_scheduler = lr::Warmup {
