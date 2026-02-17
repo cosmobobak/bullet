@@ -261,9 +261,7 @@ fn main() {
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
-            let stm_subnet = stm_subnet.faux_quantise(127.0, false);
-            let ntm_subnet = ntm_subnet.faux_quantise(127.0, false);
-            let l0_out = stm_subnet.concat(ntm_subnet);
+            let l0_out = stm_subnet.concat(ntm_subnet).faux_quantise(127.0, false);
 
             // L₁-norm penalty on accumulator:
             let ones_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
