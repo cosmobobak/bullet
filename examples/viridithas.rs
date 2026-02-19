@@ -246,10 +246,13 @@ fn main() {
             // input layer weights
             let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, L1);
             l0.init_with_effective_input_size(32);
-            l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
+            l0.weights =
+                (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP).faux_quantise(255.0, true);
+            l0.bias = l0.bias.faux_quantise(255.0, true);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2 * 2);
+            let mut l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
+            l1.weights = l1.weights.faux_quantise(64.0, true);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
             let l2f = builder.new_affine("l2f", L2, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
@@ -258,7 +261,7 @@ fn main() {
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
             let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
-            let l0_out = stm_subnet.concat(ntm_subnet);
+            let l0_out = stm_subnet.concat(ntm_subnet).faux_quantise(127.0, false);
 
             // L₁-norm penalty on accumulator:
             let ones_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
