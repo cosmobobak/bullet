@@ -268,9 +268,7 @@ fn main() {
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
-            let l1_swish = hard_swish(l1_out.slice_rows(0, L2));
-            let l1_ident = l1_out.slice_rows(L2, L2 * 2);
-            let l1_out = l1_swish * l1_ident;
+            let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
@@ -349,7 +347,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "illusion".to_string(),
+        net_id: "click".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
