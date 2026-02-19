@@ -249,7 +249,7 @@ fn main() {
             l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2 * 2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
             let l2f = builder.new_affine("l2f", L2, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
@@ -265,7 +265,9 @@ fn main() {
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
-            let l1_out = hard_swish(l1_out);
+            let l1_swish = hard_swish(l1_out.slice_rows(0, L2));
+            let l1_ident = l1_out.slice_rows(L2, L2 * 2);
+            let l1_out = l1_swish * l1_ident;
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
             let l2f_out = l2f.forward(l1_out);
@@ -320,7 +322,7 @@ fn main() {
             } else {
                 // let loss =
                 //     builder.apply(BCELogitsLoss { logits: l3_out.annotated_node(), target: targets.annotated_node() });
-                let loss = l3_out.sigmoid().power_error(targets, 2.5);
+                let loss = l3_out.sigmoid().squared_error(targets);
 
                 let loss = loss + 0.005 * l0_out_norm;
 
@@ -344,7 +346,7 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l3fb", no_clipping);
 
     let schedule = TrainingSchedule {
-        net_id: "dispiration".to_string(),
+        net_id: "illusion".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
