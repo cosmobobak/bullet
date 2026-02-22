@@ -47,13 +47,18 @@ fn main() {
     let dataset_path = "data/all.vf";
     let initial_lr = 0.001;
     let superbatches = 800;
+    let decay_superbatches = superbatches / 5;
     let lr_scheduler = lr::Warmup {
-        inner: lr::CosineDecayLR {
-            initial_lr,
-            final_lr: initial_lr * f32::powi(0.3, 3),
-            final_superbatch: superbatches,
+        inner: lr::Sequence {
+            first: lr::ConstantLR { value: initial_lr },
+            second: lr::CosineDecayLR {
+                initial_lr,
+                final_lr: initial_lr * f32::powi(0.3, 3),
+                final_superbatch: decay_superbatches,
+            },
+            first_scheduler_final_superbatch: superbatches - decay_superbatches,
         },
-        warmup_batches: 1600,
+        warmup_batches: 8 * (6104 / BATCH_GLOM),
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
@@ -176,7 +181,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "click".to_string(),
+        net_id: "infundibulum".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
