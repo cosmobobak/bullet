@@ -91,8 +91,8 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
-            let l2f = builder.new_affine("l2f", L2, L3 * 2);
+            let l2x = builder.new_affine("l2x", L2 - 1, NUM_OUTPUT_BUCKETS * L3 * 2);
+            let l2f = builder.new_affine("l2f", L2 - 1, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
 
@@ -106,6 +106,10 @@ fn main() {
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
+
+            let l1_skip = l1_out.slice_rows(0, 1);
+            let l1_out = l1_out.slice_rows(1, L2);
+
             let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
@@ -120,6 +124,8 @@ fn main() {
             let l3f_out = l3f.forward(l2_out);
 
             let l3_out = l3x_out + l3f_out;
+
+            let l3_out = l3_out + l1_skip;
 
             if HEADS == 3 {
                 // -------- MSE --------
