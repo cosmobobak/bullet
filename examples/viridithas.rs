@@ -18,8 +18,9 @@ use bullet_lib::{
 };
 
 const L1: usize = 2560;
-const L2: usize = 16;
+const L2: usize = 32;
 const L3: usize = 32;
+const L4: usize = 32;
 const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
@@ -57,9 +58,12 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let mut saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-        .map(SavedFormat::id)
-        .to_vec();
+    let mut saves = [
+        "l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb", "l4xw", "l4fw",
+        "l4xb", "l4fb",
+    ]
+    .map(SavedFormat::id)
+    .to_vec();
 
     // merge factoriser weights when saving:
     saves[0] = saves[0].clone().transform(|builder, mut weights| {
@@ -91,10 +95,12 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2 - 1, NUM_OUTPUT_BUCKETS * L3 * 2);
-            let l2f = builder.new_affine("l2f", L2 - 1, L3 * 2);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
-            let l3f = builder.new_affine("l3f", L3, HEADS);
+            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
+            let l2f = builder.new_affine("l2f", L2, L3 * 2);
+            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * L4 * 2);
+            let l3f = builder.new_affine("l3f", L3, L4 * 2);
+            let l4x = builder.new_affine("l4x", L4, NUM_OUTPUT_BUCKETS * HEADS);
+            let l4f = builder.new_affine("l4f", L4, HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
@@ -106,10 +112,6 @@ fn main() {
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
-
-            let l1_skip = l1_out.slice_rows(0, 1);
-            let l1_out = l1_out.slice_rows(1, L2);
-
             let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(output_buckets);
@@ -119,13 +121,21 @@ fn main() {
             let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
             let l2_ident = l2_out.slice_rows(L3, L3 * 2);
             let l2_out = l2_swish * l2_ident;
+            let l2_out = l2_out + l1_out;
 
             let l3x_out = l3x.forward(l2_out).select(output_buckets);
             let l3f_out = l3f.forward(l2_out);
-
             let l3_out = l3x_out + l3f_out;
+            // SwiGLU: l3_out = W₁x · Swish(W₂x)
+            let l3_swish = hard_swish(l3_out.slice_rows(0, L4));
+            let l3_ident = l3_out.slice_rows(L4, L4 * 2);
+            let l3_out = l3_swish * l3_ident;
+            let l3_out = l3_out + l2_out;
 
-            let l3_out = l3_out + l1_skip;
+            let l4x_out = l4x.forward(l3_out).select(output_buckets);
+            let l4f_out = l4f.forward(l3_out);
+
+            let l4_out = l4x_out + l4f_out;
 
             if HEADS == 3 {
                 // -------- MSE --------
@@ -163,13 +173,13 @@ fn main() {
 
                 let loss = loss + 0.005 * l0_out_norm;
 
-                (l3_out, loss)
+                (l4_out, loss)
             } else {
-                let loss = l3_out.sigmoid().squared_error(targets);
+                let loss = l4_out.sigmoid().squared_error(targets);
 
                 let loss = loss + 0.005 * l0_out_norm;
 
-                (l3_out, loss)
+                (l4_out, loss)
             }
         });
 
@@ -184,7 +194,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "ediction".to_string(),
+        net_id: "totaliser".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
