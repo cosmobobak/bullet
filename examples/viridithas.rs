@@ -1,4 +1,4 @@
-use acyclib::graph::builder::GraphBuilderNode;
+use acyclib::graph::builder::{GraphBuilder, GraphBuilderNode};
 use bullet_cuda_backend::CudaMarker;
 use bullet_lib::{
     game::{
@@ -114,8 +114,9 @@ fn main() {
             let l1_out = l1.forward(l0_out).select(output_buckets);
             let l1_out = hard_swish(l1_out);
 
-            let l2x_out = l2x.forward(l1_out).select(output_buckets);
-            let l2f_out = l2f.forward(l1_out);
+            let l1_normed = rms_norm(builder, l1_out, L2);
+            let l2x_out = l2x.forward(l1_normed).select(output_buckets);
+            let l2f_out = l2f.forward(l1_normed);
             let l2_out = l2x_out + l2f_out;
             // SwiGLU: l2_out = W₁x · Swish(W₂x)
             let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
@@ -123,8 +124,9 @@ fn main() {
             let l2_out = l2_swish * l2_ident;
             let l2_out = l2_out + l1_out;
 
-            let l3x_out = l3x.forward(l2_out).select(output_buckets);
-            let l3f_out = l3f.forward(l2_out);
+            let l2_normed = rms_norm(builder, l2_out, L3);
+            let l3x_out = l3x.forward(l2_normed).select(output_buckets);
+            let l3f_out = l3f.forward(l2_normed);
             let l3_out = l3x_out + l3f_out;
             // SwiGLU: l3_out = W₁x · Swish(W₂x)
             let l3_swish = hard_swish(l3_out.slice_rows(0, L4));
@@ -187,14 +189,16 @@ fn main() {
     let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
     trainer.optimiser.set_params_for_weight("l1w", adamw);
     trainer.optimiser.set_params_for_weight("l1b", adamw);
-    // don't bother clipping the float laters or l0
+    // don't bother clipping the float layers or l0
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
-    for name in ["l0w", "l0f", "l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
+    for name in
+        ["l0w", "l0f", "l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb", "l4xw", "l4xb", "l4fw", "l4fb"]
+    {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "totaliser".to_string(),
+        net_id: "collimator".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -236,6 +240,18 @@ fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> 
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
     let e_minus_x = inv_sigmoid - 1.0;
     e_minus_x.abs_pow(-1.0)
+}
+
+fn rms_norm<'a>(
+    builder: &'a GraphBuilder<CudaMarker>,
+    x: GraphBuilderNode<'a, CudaMarker>,
+    dim: usize,
+) -> GraphBuilderNode<'a, CudaMarker> {
+    let mean_coeff = builder.new_constant(Shape::new(1, dim), &vec![1.0 / dim as f32; dim]);
+    let mean_sq = mean_coeff.matmul(x * x);
+    let inv_rms = (mean_sq + 1e-6).abs_pow(-0.5);
+    let ones_col = builder.new_constant(Shape::new(dim, 1), &vec![1.0; dim]);
+    x * ones_col.matmul(inv_rms)
 }
 
 fn hard_swish<'a>(x: GraphBuilderNode<'a, CudaMarker>) -> GraphBuilderNode<'a, CudaMarker> {
