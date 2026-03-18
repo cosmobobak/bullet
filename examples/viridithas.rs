@@ -18,8 +18,8 @@ use bullet_lib::{
 };
 
 const L1: usize = 2560;
-const L2: usize = 32;
-const HIDDEN: usize = 64;
+const RESIDUAL: usize = 32;
+const EXPERT_WIDTH: usize = 32;
 const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
@@ -58,8 +58,8 @@ fn main() {
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
     let mut saves = [
-        "l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l2dw", "l2db", "l3xw", "l3fw", "l3xb", "l3fb",
-        "l3dw", "l3db", "l4xw", "l4fw", "l4xb", "l4fb",
+        "l0w", "l0b", "l1w", "l1b", "l2xuw", "l2xub", "l2xdw", "l2xdb", "l2fuw", "l2fub", "l2fdw", "l2fdb", "l3xuw",
+        "l3xub", "l3xdw", "l3xdb", "l3fuw", "l3fub", "l3fdw", "l3fdb", "l4xw", "l4fw", "l4xb", "l4fb",
     ]
     .map(SavedFormat::id)
     .to_vec();
@@ -93,15 +93,23 @@ fn main() {
             l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
-            let l2f = builder.new_affine("l2f", L2, HIDDEN * 2);
-            let l2d = builder.new_affine("l2d", HIDDEN, L2);
-            let l3x = builder.new_affine("l3x", L2, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
-            let l3f = builder.new_affine("l3f", L2, HIDDEN * 2);
-            let l3d = builder.new_affine("l3d", HIDDEN, L2);
-            let l4x = builder.new_affine("l4x", L2, NUM_OUTPUT_BUCKETS * HEADS);
-            let l4f = builder.new_affine("l4f", L2, HEADS);
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * RESIDUAL);
+
+            // L2 block: shared expert + bucketed expert
+            let l2xu = builder.new_affine("l2xu", RESIDUAL, NUM_OUTPUT_BUCKETS * EXPERT_WIDTH * 2);
+            let l2xd = builder.new_affine("l2xd", EXPERT_WIDTH, NUM_OUTPUT_BUCKETS * RESIDUAL);
+            let l2fu = builder.new_affine("l2fu", RESIDUAL, EXPERT_WIDTH * 2);
+            let l2fd = builder.new_affine("l2fd", EXPERT_WIDTH, RESIDUAL);
+
+            // L3 block: shared expert + bucketed expert
+            let l3xu = builder.new_affine("l3xu", RESIDUAL, NUM_OUTPUT_BUCKETS * EXPERT_WIDTH * 2);
+            let l3xd = builder.new_affine("l3xd", EXPERT_WIDTH, NUM_OUTPUT_BUCKETS * RESIDUAL);
+            let l3fu = builder.new_affine("l3fu", RESIDUAL, EXPERT_WIDTH * 2);
+            let l3fd = builder.new_affine("l3fd", EXPERT_WIDTH, RESIDUAL);
+
+            // output head
+            let l4x = builder.new_affine("l4x", RESIDUAL, NUM_OUTPUT_BUCKETS * HEADS);
+            let l4f = builder.new_affine("l4f", RESIDUAL, HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
@@ -114,25 +122,37 @@ fn main() {
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
 
-            let l1_normed = rms_norm(builder, l1_out, L2);
-            let l2x_out = l2x.forward(l1_normed).select(output_buckets);
-            let l2f_out = l2f.forward(l1_normed);
-            let l2_out = l2x_out + l2f_out;
-            // SwiGLU: l2_out = W₁x · Swish(W₂x)
-            let l2_swish = hard_swish(l2_out.slice_rows(0, HIDDEN));
-            let l2_ident = l2_out.slice_rows(HIDDEN, HIDDEN * 2);
-            let l2_out = l2_swish * l2_ident;
-            let l2_out = l2d.forward(l2_out) + l1_out;
+            let l1_normed = rms_norm(builder, l1_out, RESIDUAL);
 
-            let l2_normed = rms_norm(builder, l2_out, L2);
-            let l3x_out = l3x.forward(l2_normed).select(output_buckets);
-            let l3f_out = l3f.forward(l2_normed);
-            let l3_out = l3x_out + l3f_out;
-            // SwiGLU: l3_out = W₁x · Swish(W₂x)
-            let l3_swish = hard_swish(l3_out.slice_rows(0, HIDDEN));
-            let l3_ident = l3_out.slice_rows(HIDDEN, HIDDEN * 2);
-            let l3_out = l3_swish * l3_ident;
-            let l3_out = l3d.forward(l3_out) + l2_out;
+            // L2 shared expert: up → SwiGLU → down
+            let l2f_up = l2fu.forward(l1_normed);
+            let l2f_out =
+                hard_swish(l2f_up.slice_rows(0, EXPERT_WIDTH)) * l2f_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
+            let l2f_out = l2fd.forward(l2f_out);
+
+            // L2 bucketed expert: up → select → SwiGLU → down → select
+            let l2x_up = l2xu.forward(l1_normed).select(output_buckets);
+            let l2x_out =
+                hard_swish(l2x_up.slice_rows(0, EXPERT_WIDTH)) * l2x_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
+            let l2x_out = l2xd.forward(l2x_out).select(output_buckets);
+
+            let l2_out = l2f_out + l2x_out + l1_out;
+
+            let l2_normed = rms_norm(builder, l2_out, RESIDUAL);
+
+            // L3 shared expert: up → SwiGLU → down
+            let l3f_up = l3fu.forward(l2_normed);
+            let l3f_out =
+                hard_swish(l3f_up.slice_rows(0, EXPERT_WIDTH)) * l3f_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
+            let l3f_out = l3fd.forward(l3f_out);
+
+            // L3 bucketed expert: up → select → SwiGLU → down → select
+            let l3x_up = l3xu.forward(l2_normed).select(output_buckets);
+            let l3x_out =
+                hard_swish(l3x_up.slice_rows(0, EXPERT_WIDTH)) * l3x_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
+            let l3x_out = l3xd.forward(l3x_out).select(output_buckets);
+
+            let l3_out = l3f_out + l3x_out + l2_out;
 
             let l4x_out = l4x.forward(l3_out).select(output_buckets);
             let l4f_out = l4f.forward(l3_out);
@@ -192,14 +212,14 @@ fn main() {
     // don't bother clipping the float layers or l0
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
     for name in [
-        "l0w", "l0f", "l2xw", "l2xb", "l2fw", "l2fb", "l2dw", "l2db", "l3xw", "l3xb", "l3fw", "l3fb", "l3dw", "l3db",
-        "l4xw", "l4xb", "l4fw", "l4fb",
+        "l0w", "l0f", "l2xuw", "l2xub", "l2xdw", "l2xdb", "l2fuw", "l2fub", "l2fdw", "l2fdb", "l3xuw", "l3xub",
+        "l3xdw", "l3xdb", "l3fuw", "l3fub", "l3fdw", "l3fdb", "l4xw", "l4xb", "l4fw", "l4fb",
     ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "pulsar".to_string(),
+        net_id: "dynode".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
