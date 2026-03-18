@@ -113,7 +113,6 @@ fn main() {
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
-            let l1_out = hard_swish(l1_out);
 
             let l1_normed = rms_norm(builder, l1_out, L2);
             let l2x_out = l2x.forward(l1_normed).select(output_buckets);
@@ -200,7 +199,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "turbine".to_string(),
+        net_id: "pulsar".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
