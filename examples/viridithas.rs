@@ -19,8 +19,7 @@ use bullet_lib::{
 
 const L1: usize = 2560;
 const L2: usize = 32;
-const L3: usize = 32;
-const L4: usize = 32;
+const HIDDEN: usize = 64;
 const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
@@ -59,8 +58,8 @@ fn main() {
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
     let mut saves = [
-        "l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb", "l4xw", "l4fw",
-        "l4xb", "l4fb",
+        "l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l2dw", "l2db", "l3xw", "l3fw", "l3xb", "l3fb",
+        "l3dw", "l3db", "l4xw", "l4fw", "l4xb", "l4fb",
     ]
     .map(SavedFormat::id)
     .to_vec();
@@ -95,12 +94,14 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
-            let l2f = builder.new_affine("l2f", L2, L3 * 2);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * L4 * 2);
-            let l3f = builder.new_affine("l3f", L3, L4 * 2);
-            let l4x = builder.new_affine("l4x", L4, NUM_OUTPUT_BUCKETS * HEADS);
-            let l4f = builder.new_affine("l4f", L4, HEADS);
+            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
+            let l2f = builder.new_affine("l2f", L2, HIDDEN * 2);
+            let l2d = builder.new_affine("l2d", HIDDEN, L2);
+            let l3x = builder.new_affine("l3x", L2, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
+            let l3f = builder.new_affine("l3f", L2, HIDDEN * 2);
+            let l3d = builder.new_affine("l3d", HIDDEN, L2);
+            let l4x = builder.new_affine("l4x", L2, NUM_OUTPUT_BUCKETS * HEADS);
+            let l4f = builder.new_affine("l4f", L2, HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
@@ -119,20 +120,20 @@ fn main() {
             let l2f_out = l2f.forward(l1_normed);
             let l2_out = l2x_out + l2f_out;
             // SwiGLU: l2_out = W₁x · Swish(W₂x)
-            let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
-            let l2_ident = l2_out.slice_rows(L3, L3 * 2);
+            let l2_swish = hard_swish(l2_out.slice_rows(0, HIDDEN));
+            let l2_ident = l2_out.slice_rows(HIDDEN, HIDDEN * 2);
             let l2_out = l2_swish * l2_ident;
-            let l2_out = l2_out + l1_out;
+            let l2_out = l2d.forward(l2_out) + l1_out;
 
-            let l2_normed = rms_norm(builder, l2_out, L3);
+            let l2_normed = rms_norm(builder, l2_out, L2);
             let l3x_out = l3x.forward(l2_normed).select(output_buckets);
             let l3f_out = l3f.forward(l2_normed);
             let l3_out = l3x_out + l3f_out;
             // SwiGLU: l3_out = W₁x · Swish(W₂x)
-            let l3_swish = hard_swish(l3_out.slice_rows(0, L4));
-            let l3_ident = l3_out.slice_rows(L4, L4 * 2);
+            let l3_swish = hard_swish(l3_out.slice_rows(0, HIDDEN));
+            let l3_ident = l3_out.slice_rows(HIDDEN, HIDDEN * 2);
             let l3_out = l3_swish * l3_ident;
-            let l3_out = l3_out + l2_out;
+            let l3_out = l3d.forward(l3_out) + l2_out;
 
             let l4x_out = l4x.forward(l3_out).select(output_buckets);
             let l4f_out = l4f.forward(l3_out);
@@ -145,9 +146,9 @@ fn main() {
                 let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
                 let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
 
-                let loss = loss_mask.matmul(l3_out);
-                let draw = draw_mask.matmul(l3_out);
-                let win = win_mask.matmul(l3_out);
+                let loss = loss_mask.matmul(l4_out);
+                let draw = draw_mask.matmul(l4_out);
+                let win = win_mask.matmul(l4_out);
 
                 let max = maximum(loss, maximum(draw, win));
 
@@ -169,7 +170,7 @@ fn main() {
 
                 // -------- CE --------
                 let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-                let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
+                let ce_loss = ones.matmul(l4_out.softmax_crossentropy_loss(targets));
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
@@ -191,14 +192,15 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l1b", adamw);
     // don't bother clipping the float layers or l0
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
-    for name in
-        ["l0w", "l0f", "l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb", "l4xw", "l4xb", "l4fw", "l4fb"]
-    {
+    for name in [
+        "l0w", "l0f", "l2xw", "l2xb", "l2fw", "l2fb", "l2dw", "l2db", "l3xw", "l3xb", "l3fw", "l3fb", "l3dw", "l3db",
+        "l4xw", "l4xb", "l4fw", "l4fb",
+    ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "collimator".to_string(),
+        net_id: "turbine".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
