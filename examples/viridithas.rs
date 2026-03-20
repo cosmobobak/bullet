@@ -63,15 +63,9 @@ fn main() {
     .to_vec();
 
     // merge factoriser weights when saving:
-    saves[0] = saves[0].clone().transform(|builder, mut weights| {
-        let factoriser = builder.get("l0f").values;
-        let expanded = factoriser.repeat(weights.len() / factoriser.len());
-
-        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
-            *i += *j;
-        }
-
-        weights
+    saves[0] = saves[0].clone().transform(|store, mut weights| {
+        let factoriser = store.get("l0f").values.f32().repeat(NUM_INPUT_BUCKETS);
+        weights.into_iter().zip(factoriser).map(|(a, b)| a + b).collect()
     });
 
     let mut trainer = ValueTrainerBuilder::default()
