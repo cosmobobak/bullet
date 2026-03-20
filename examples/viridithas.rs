@@ -1,12 +1,10 @@
-use acyclib::graph::builder::{GraphBuilder, GraphBuilderNode};
-use bullet_cuda_backend::CudaMarker;
 use bullet_lib::{
     game::{
         inputs::{ChessBucketsMirrored, get_num_buckets},
         outputs::MaterialCount,
     },
     nn::{
-        InitSettings, Shape,
+        InitSettings, ModelBuilder, ModelNode, Shape,
         optimiser::{AdamW, AdamWParams},
     },
     trainer::{
@@ -249,25 +247,18 @@ fn main() {
     trainer.run(&schedule, &settings, &dataloader);
 }
 
-fn maximum<'a>(
-    x: GraphBuilderNode<'a, CudaMarker>,
-    y: GraphBuilderNode<'a, CudaMarker>,
-) -> GraphBuilderNode<'a, CudaMarker> {
+fn maximum<'a>(x: ModelNode<'a>, y: ModelNode<'a>) -> ModelNode<'a> {
     (x - y).relu() + y
 }
 
-fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
+fn exp(x: ModelNode<'_>) -> ModelNode<'_> {
     let sigmoid = x.sigmoid();
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
     let e_minus_x = inv_sigmoid - 1.0;
     e_minus_x.abs_pow(-1.0)
 }
 
-fn rms_norm<'a>(
-    builder: &'a GraphBuilder<CudaMarker>,
-    x: GraphBuilderNode<'a, CudaMarker>,
-    dim: usize,
-) -> GraphBuilderNode<'a, CudaMarker> {
+fn rms_norm<'a>(builder: &'a ModelBuilder, x: ModelNode<'a>, dim: usize) -> ModelNode<'a> {
     let mean_coeff = builder.new_constant(Shape::new(1, dim), &vec![1.0 / dim as f32; dim]);
     let mean_sq = mean_coeff.matmul(x * x);
     let inv_rms = (mean_sq + 1e-6).abs_pow(-0.5);
@@ -275,7 +266,7 @@ fn rms_norm<'a>(
     x * ones_col.matmul(inv_rms)
 }
 
-fn hard_swish<'a>(x: GraphBuilderNode<'a, CudaMarker>) -> GraphBuilderNode<'a, CudaMarker> {
+fn hard_swish<'a>(x: ModelNode<'a>) -> ModelNode<'a> {
     let gate = (x * 1. / 6.0 + 0.5).crelu();
     x * gate
 }

@@ -2,22 +2,18 @@ use std::marker::PhantomData;
 
 use bullet_gpu::runtime::Device;
 use bullet_trainer::{
-    model::{save::SavedFormat, Shape},
-    optimiser::Optimiser,
     Trainer,
+    model::{Shape, save::SavedFormat},
+    optimiser::Optimiser,
 };
 
 use crate::{
     game::{inputs::SparseInputType, outputs::OutputBuckets},
-    nn::{
-        optimiser::OptimiserType, BackendMarker, ExecutionContext, ExecutionContext, ModelBuilder, ModelNode,
-        NetworkBuilder, NetworkBuilderNode,
-    },
-    value::ValueTrainerState,
-    value::{loader::TargetType, ValueTrainerState},
+    nn::{ExecutionContext, ModelBuilder, ModelNode, optimiser::OptimiserType},
+    value::{ValueTrainerState, loader::TargetType},
 };
 
-use super::{ValueTrainer, B};
+use super::{B, ValueTrainer};
 
 type Wgt<I> = fn(&<I as SparseInputType>::RequiredDataType) -> f32;
 type LossFn = for<'a> fn(Nbn<'a>, Nbn<'a>) -> Nbn<'a>;
