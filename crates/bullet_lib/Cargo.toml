@@ -73,3 +73,7 @@ path = "../../examples/extra/relabel.rs"
 [[example]]
 name = "viridithas"
 path = "../../examples/viridithas.rs"
+
+[[example]]
+name = "cleanphrax"
+path = "../../examples/cleanphrax.rs"

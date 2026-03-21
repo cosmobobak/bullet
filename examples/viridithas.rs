@@ -1,8 +1,8 @@
-use acyclib::graph::builder::{GraphBuilder, GraphBuilderNode};
+use acyclib::graph::builder::GraphBuilderNode;
 use bullet_cuda_backend::CudaMarker;
 use bullet_lib::{
     game::{
-        inputs::{ChessBucketsMirrored, get_num_buckets},
+        inputs::{ChessBucketsMirrored, SparseInputType as _, get_num_buckets},
         outputs::MaterialCount,
     },
     nn::{
@@ -17,9 +17,17 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-const L1: usize = 2560;
-const RESIDUAL: usize = 32;
-const EXPERT_WIDTH: usize = 32;
+use crate::threat_inputs::ThreatInputs;
+
+mod attacks;
+mod indices;
+mod offsets;
+mod threat_inputs;
+mod threats;
+
+const L1: usize = 640;
+const L2: usize = 32;
+const L3: usize = 32;
 const HEADS: usize = 1;
 
 const CLIP: f32 = 0.99 * 2.0;
@@ -43,6 +51,8 @@ const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 const BATCH_GLOM: usize = 4;
 
 fn main() {
+    let inputs = ThreatInputs::new(BUCKET_LAYOUT);
+
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
     let initial_lr = 0.001;
@@ -57,107 +67,51 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let mut saves = [
-        "l0w", "l0b", "l1w", "l1b", "l2xuw", "l2xub", "l2xdw", "l2xdb", "l2fuw", "l2fub", "l2fdw", "l2fdb", "l3xuw",
-        "l3xub", "l3xdw", "l3xdb", "l3fuw", "l3fub", "l3fdw", "l3fdb", "l4xw", "l4fw", "l4xb", "l4fb",
-    ]
-    .map(SavedFormat::id)
-    .to_vec();
-
-    // merge factoriser weights when saving:
-    saves[0] = saves[0].clone().transform(|builder, mut weights| {
-        let factoriser = builder.get("l0f").values;
-        let expanded = factoriser.repeat(weights.len() / factoriser.len());
-
-        for (i, j) in weights.iter_mut().zip(expanded.iter()) {
-            *i += *j;
-        }
-
-        weights
-    });
+    let saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+        .map(SavedFormat::id);
 
     let mut trainer = ValueTrainerBuilder::default()
-        .inputs(ChessBucketsMirrored::new(BUCKET_LAYOUT))
         .dual_perspective()
-        .optimiser(AdamW)
+        .inputs(inputs)
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
+        .optimiser(AdamW)
         .save_format(&saves)
-        .build_custom(|builder, (stm_inputs, ntm_inputs, output_buckets), targets| {
+        .build_custom(|builder, (stm, ntm, buckets), targets| {
             // input layer factoriser
-            let l0f = builder.new_weights("l0f", Shape::new(L1, 768), InitSettings::Zeroed);
-            let expanded_factoriser = l0f.repeat(NUM_INPUT_BUCKETS);
-
-            // input layer weights
-            let mut l0 = builder.new_affine("l0", 768 * NUM_INPUT_BUCKETS, L1);
-            l0.init_with_effective_input_size(32);
-            l0.weights = (l0.weights + expanded_factoriser).clip_pass_through_grad(-CLIP, CLIP);
+            let l0 = builder.new_affine("l0", inputs.num_inputs(), L1);
+            l0.init_with_effective_input_size(20000);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * RESIDUAL);
-
-            // L2 block: shared expert + bucketed expert
-            let l2xu = builder.new_affine("l2xu", RESIDUAL, NUM_OUTPUT_BUCKETS * EXPERT_WIDTH * 2);
-            let l2xd = builder.new_affine("l2xd", EXPERT_WIDTH, NUM_OUTPUT_BUCKETS * RESIDUAL);
-            let l2fu = builder.new_affine("l2fu", RESIDUAL, EXPERT_WIDTH * 2);
-            let l2fd = builder.new_affine("l2fd", EXPERT_WIDTH, RESIDUAL);
-
-            // L3 block: shared expert + bucketed expert
-            let l3xu = builder.new_affine("l3xu", RESIDUAL, NUM_OUTPUT_BUCKETS * EXPERT_WIDTH * 2);
-            let l3xd = builder.new_affine("l3xd", EXPERT_WIDTH, NUM_OUTPUT_BUCKETS * RESIDUAL);
-            let l3fu = builder.new_affine("l3fu", RESIDUAL, EXPERT_WIDTH * 2);
-            let l3fd = builder.new_affine("l3fd", EXPERT_WIDTH, RESIDUAL);
-
-            // output head
-            let l4x = builder.new_affine("l4x", RESIDUAL, NUM_OUTPUT_BUCKETS * HEADS);
-            let l4f = builder.new_affine("l4f", RESIDUAL, HEADS);
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
+            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
+            let l2f = builder.new_affine("l2f", L2, L3 * 2);
+            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
+            let l3f = builder.new_affine("l3f", L3, HEADS);
 
             // inference
-            let stm_subnet = l0.forward(stm_inputs).crelu().pairwise_mul();
-            let ntm_subnet = l0.forward(ntm_inputs).crelu().pairwise_mul();
+            let stm_subnet = l0.forward(stm).crelu().pairwise_mul();
+            let ntm_subnet = l0.forward(ntm).crelu().pairwise_mul();
             let l0_out = stm_subnet.concat(ntm_subnet);
 
             // L₁-norm penalty on accumulator:
             let ones_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
             let l0_out_norm = ones_l1_vec.matmul(l0_out);
 
-            let l1_out = l1.forward(l0_out).select(output_buckets);
+            let l1_out = l1.forward(l0_out).select(buckets);
+            let l1_out = hard_swish(l1_out);
 
-            let l1_normed = rms_norm(builder, l1_out, RESIDUAL);
+            let l2x_out = l2x.forward(l1_out).select(buckets);
+            let l2f_out = l2f.forward(l1_out);
+            let l2_out = l2x_out + l2f_out;
+            // SwiGLU: l2_out = W₁x · Swish(W₂x)
+            let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
+            let l2_ident = l2_out.slice_rows(L3, L3 * 2);
+            let l2_out = l2_swish * l2_ident;
 
-            // L2 shared expert: up → SwiGLU → down
-            let l2f_up = l2fu.forward(l1_normed);
-            let l2f_out =
-                hard_swish(l2f_up.slice_rows(0, EXPERT_WIDTH)) * l2f_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
-            let l2f_out = l2fd.forward(l2f_out);
+            let l3x_out = l3x.forward(l2_out).select(buckets);
+            let l3f_out = l3f.forward(l2_out);
 
-            // L2 bucketed expert: up → select → SwiGLU → down → select
-            let l2x_up = l2xu.forward(l1_normed).select(output_buckets);
-            let l2x_out =
-                hard_swish(l2x_up.slice_rows(0, EXPERT_WIDTH)) * l2x_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
-            let l2x_out = l2xd.forward(l2x_out).select(output_buckets);
-
-            let l2_out = l2f_out + l2x_out + l1_out;
-
-            let l2_normed = rms_norm(builder, l2_out, RESIDUAL);
-
-            // L3 shared expert: up → SwiGLU → down
-            let l3f_up = l3fu.forward(l2_normed);
-            let l3f_out =
-                hard_swish(l3f_up.slice_rows(0, EXPERT_WIDTH)) * l3f_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
-            let l3f_out = l3fd.forward(l3f_out);
-
-            // L3 bucketed expert: up → select → SwiGLU → down → select
-            let l3x_up = l3xu.forward(l2_normed).select(output_buckets);
-            let l3x_out =
-                hard_swish(l3x_up.slice_rows(0, EXPERT_WIDTH)) * l3x_up.slice_rows(EXPERT_WIDTH, EXPERT_WIDTH * 2);
-            let l3x_out = l3xd.forward(l3x_out).select(output_buckets);
-
-            let l3_out = l3f_out + l3x_out + l2_out;
-
-            let l4x_out = l4x.forward(l3_out).select(output_buckets);
-            let l4f_out = l4f.forward(l3_out);
-
-            let l4_out = l4x_out + l4f_out;
+            let l3_out = l3x_out + l3f_out;
 
             if HEADS == 3 {
                 // -------- MSE --------
@@ -165,9 +119,9 @@ fn main() {
                 let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
                 let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
 
-                let loss = loss_mask.matmul(l4_out);
-                let draw = draw_mask.matmul(l4_out);
-                let win = win_mask.matmul(l4_out);
+                let loss = loss_mask.matmul(l3_out);
+                let draw = draw_mask.matmul(l3_out);
+                let win = win_mask.matmul(l3_out);
 
                 let max = maximum(loss, maximum(draw, win));
 
@@ -189,37 +143,38 @@ fn main() {
 
                 // -------- CE --------
                 let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-                let ce_loss = ones.matmul(l4_out.softmax_crossentropy_loss(targets));
+                let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
                 let loss = loss + 0.005 * l0_out_norm;
 
-                (l4_out, loss)
+                (l3_out, loss)
             } else {
-                let loss = l4_out.sigmoid().squared_error(targets);
+                let loss = l3_out.sigmoid().squared_error(targets);
 
                 let loss = loss + 0.005 * l0_out_norm;
 
-                (l4_out, loss)
+                (l3_out, loss)
             }
         });
 
-    // apply clipping to L1:
-    let adamw = AdamWParams { max_weight: CLIP, min_weight: -CLIP, ..Default::default() };
-    trainer.optimiser.set_params_for_weight("l1w", adamw);
-    trainer.optimiser.set_params_for_weight("l1b", adamw);
-    // don't bother clipping the float layers or l0
-    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..adamw };
-    for name in [
-        "l0w", "l0f", "l2xuw", "l2xub", "l2xdw", "l2xdb", "l2fuw", "l2fub", "l2fdw", "l2fdb", "l3xuw", "l3xub",
-        "l3xdw", "l3xdb", "l3fuw", "l3fub", "l3fdw", "l3fdb", "l4xw", "l4xb", "l4fw", "l4fb",
-    ] {
+    let default_optimiser_params =
+        AdamWParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
+    let l0w_optimiser_params = AdamWParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
+    let l1w_clip = 0.99 * 255.0 * 255.0 / (256.0 * 256.0);
+    let l1w_optimiser_params = AdamWParams { min_weight: -l1w_clip, max_weight: l1w_clip, ..default_optimiser_params };
+    trainer.optimiser.set_params(default_optimiser_params);
+    trainer.optimiser.set_params_for_weight("l0w", l0w_optimiser_params);
+    trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
+    // don't bother clipping the float laters
+    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
+    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "dynode".to_string(),
+        net_id: "invocation".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -261,18 +216,6 @@ fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> 
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
     let e_minus_x = inv_sigmoid - 1.0;
     e_minus_x.abs_pow(-1.0)
-}
-
-fn rms_norm<'a>(
-    builder: &'a GraphBuilder<CudaMarker>,
-    x: GraphBuilderNode<'a, CudaMarker>,
-    dim: usize,
-) -> GraphBuilderNode<'a, CudaMarker> {
-    let mean_coeff = builder.new_constant(Shape::new(1, dim), &vec![1.0 / dim as f32; dim]);
-    let mean_sq = mean_coeff.matmul(x * x);
-    let inv_rms = (mean_sq + 1e-6).abs_pow(-0.5);
-    let ones_col = builder.new_constant(Shape::new(dim, 1), &vec![1.0; dim]);
-    x * ones_col.matmul(inv_rms)
 }
 
 fn hard_swish<'a>(x: GraphBuilderNode<'a, CudaMarker>) -> GraphBuilderNode<'a, CudaMarker> {
