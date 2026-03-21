@@ -1,12 +1,9 @@
 use acyclib::graph::builder::GraphBuilderNode;
 use bullet_cuda_backend::CudaMarker;
 use bullet_lib::{
-    game::{
-        inputs::{ChessBucketsMirrored, SparseInputType as _, get_num_buckets},
-        outputs::MaterialCount,
-    },
+    game::{inputs::SparseInputType as _, outputs::MaterialCount},
     nn::{
-        InitSettings, Shape,
+        Shape,
         optimiser::{AdamW, AdamWParams},
     },
     trainer::{
@@ -25,12 +22,10 @@ mod offsets;
 mod threat_inputs;
 mod threats;
 
-const L1: usize = 640;
+const L1: usize = 1024;
 const L2: usize = 32;
 const L3: usize = 32;
 const HEADS: usize = 1;
-
-const CLIP: f32 = 0.99 * 2.0;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
@@ -45,8 +40,6 @@ const BUCKET_LAYOUT: [usize; 32] = [
     14, 14, 15, 15,
     14, 14, 15, 15,
 ];
-
-const NUM_INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 
 const BATCH_GLOM: usize = 4;
 
@@ -174,7 +167,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "invocation".to_string(),
+        net_id: "convocation".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
