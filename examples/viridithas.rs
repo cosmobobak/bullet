@@ -84,9 +84,9 @@ fn main() {
             let ntm_subnet = l0.forward(ntm).crelu().pairwise_mul();
             let l0_out = stm_subnet.concat(ntm_subnet);
 
-            // L₁-norm penalty on accumulator:
-            let ones_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
-            let l0_out_norm = ones_l1_vec.matmul(l0_out);
+            // L₁-norm penalty on accumulator (mean, since values are non-negative):
+            let mean_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
+            let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
             let l1_out = hard_swish(l1_out);
@@ -158,7 +158,7 @@ fn main() {
     trainer.optimiser.set_params(default_optimiser_params);
     trainer.optimiser.set_params_for_weight("l0w", l0w_optimiser_params);
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
-    // don't bother clipping the float laters
+    // don't bother clipping the float layers
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
     for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
@@ -199,6 +199,7 @@ fn maximum<'a>(x: ModelNode<'a>, y: ModelNode<'a>) -> ModelNode<'a> {
     (x - y).relu() + y
 }
 
+// computes e^x via 1 / (1/σ(x) - 1), since 1/σ(x) - 1 = e^(-x)
 fn exp(x: ModelNode) -> ModelNode {
     let sigmoid = x.sigmoid();
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
@@ -207,6 +208,6 @@ fn exp(x: ModelNode) -> ModelNode {
 }
 
 fn hard_swish(x: ModelNode) -> ModelNode {
-    let gate = (x * 1. / 6.0 + 0.5).crelu();
+    let gate = (x * (1.0 / 6.0) + 0.5).crelu();
     x * gate
 }
