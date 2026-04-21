@@ -1,9 +1,7 @@
-use acyclib::graph::builder::GraphBuilderNode;
-use bullet_cuda_backend::CudaMarker;
 use bullet_lib::{
     game::{inputs::SparseInputType as _, outputs::MaterialCount},
     nn::{
-        Shape,
+        ModelNode, Shape,
         optimiser::{AdamW, AdamWParams},
     },
     trainer::{
@@ -197,21 +195,18 @@ fn main() {
     trainer.run(&schedule, &settings, &dataloader);
 }
 
-fn maximum<'a>(
-    x: GraphBuilderNode<'a, CudaMarker>,
-    y: GraphBuilderNode<'a, CudaMarker>,
-) -> GraphBuilderNode<'a, CudaMarker> {
+fn maximum<'a>(x: ModelNode<'a>, y: ModelNode<'a>) -> ModelNode<'a> {
     (x - y).relu() + y
 }
 
-fn exp(x: GraphBuilderNode<'_, CudaMarker>) -> GraphBuilderNode<'_, CudaMarker> {
+fn exp(x: ModelNode) -> ModelNode {
     let sigmoid = x.sigmoid();
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
     let e_minus_x = inv_sigmoid - 1.0;
     e_minus_x.abs_pow(-1.0)
 }
 
-fn hard_swish<'a>(x: GraphBuilderNode<'a, CudaMarker>) -> GraphBuilderNode<'a, CudaMarker> {
+fn hard_swish(x: ModelNode) -> ModelNode {
     let gate = (x * 1. / 6.0 + 0.5).crelu();
     x * gate
 }
