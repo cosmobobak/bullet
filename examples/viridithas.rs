@@ -165,7 +165,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "convocation".to_string(),
+        net_id: "convocation-2".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
