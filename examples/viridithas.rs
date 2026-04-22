@@ -95,9 +95,10 @@ fn main() {
             let l2f_out = l2f.forward(l1_out);
             let l2_out = l2x_out + l2f_out;
             // SwiGLU: l2_out = W₁x · Swish(W₂x)
-            let l2_swish = hard_swish(l2_out.slice_rows(0, L3));
-            let l2_ident = l2_out.slice_rows(L3, L3 * 2);
-            let l2_out = l2_swish * l2_ident;
+            let l2_out = hard_swish(l2_out.slice_rows(0, L3)) * l2_out.slice_rows(L3, L3 * 2);
+
+            // skip connexion from l1-out to l2-out:
+            let l2_out = l2_out + l1_out;
 
             let l3x_out = l3x.forward(l2_out).select(buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -165,7 +166,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "convocation-2".to_string(),
+        net_id: "atlantis".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
