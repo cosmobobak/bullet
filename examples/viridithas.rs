@@ -58,8 +58,11 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-        .map(SavedFormat::id);
+    let saves = [
+        "l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l2bxw", "l2bfw", "l2bxb", "l2bfb", "l3xw", "l3fw",
+        "l3xb", "l3fb",
+    ]
+    .map(SavedFormat::id);
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -76,6 +79,8 @@ fn main() {
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
             let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
             let l2f = builder.new_affine("l2f", L2, L3 * 2);
+            let l2bx = builder.new_affine("l2bx", L3, NUM_OUTPUT_BUCKETS * L3 * 2);
+            let l2bf = builder.new_affine("l2bf", L3, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
 
@@ -100,8 +105,17 @@ fn main() {
             // skip connexion from l1-out to l2-out:
             let l2_out = l2_out + l1_out;
 
-            let l3x_out = l3x.forward(l2_out).select(buckets);
-            let l3f_out = l3f.forward(l2_out);
+            let l2bx_out = l2bx.forward(l2_out).select(buckets);
+            let l2bf_out = l2bf.forward(l2_out);
+            let l2b_out = l2bx_out + l2bf_out;
+            // SwiGLU: l2b_out = W₁x · Swish(W₂x)
+            let l2b_out = hard_swish(l2b_out.slice_rows(0, L3)) * l2b_out.slice_rows(L3, L3 * 2);
+
+            // skip connexion from l2-out to l2b-out:
+            let l2b_out = l2b_out + l2_out;
+
+            let l3x_out = l3x.forward(l2b_out).select(buckets);
+            let l3f_out = l3f.forward(l2b_out);
 
             let l3_out = l3x_out + l3f_out;
 
@@ -161,12 +175,12 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
-    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
+    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l2bxw", "l2bxb", "l2bfw", "l2bfb", "l3xw", "l3xb", "l3fw", "l3fb"] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "atlantis".to_string(),
+        net_id: "endeavour".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
