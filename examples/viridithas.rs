@@ -89,7 +89,7 @@ fn main() {
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
-            let l1_out = hard_swish(l1_out);
+            // let l1_out = hard_swish(l1_out);
 
             let l2x_out = l2x.forward(l1_out).select(buckets);
             let l2f_out = l2f.forward(l1_out);
@@ -166,7 +166,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "x".to_string(),
+        net_id: "discovery".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
