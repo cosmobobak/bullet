@@ -23,7 +23,7 @@ mod threats;
 const L1: usize = 1024;
 const L2: usize = 32;
 const L3: usize = 32;
-const HIDDEN: usize = 64;
+const HIDDEN: usize = 128;
 const HEADS: usize = 1;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
@@ -170,7 +170,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "gearbox".to_string(),
+        net_id: "transmission".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
