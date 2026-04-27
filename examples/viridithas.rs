@@ -1,7 +1,7 @@
 use bullet_lib::{
     game::{inputs::SparseInputType as _, outputs::MaterialCount},
     nn::{
-        ModelNode, Shape,
+        ModelBuilder, ModelNode, Shape,
         optimiser::{AdamW, AdamWParams},
     },
     trainer::{
@@ -23,6 +23,7 @@ mod threats;
 const L1: usize = 1024;
 const L2: usize = 32;
 const L3: usize = 32;
+const HIDDEN: usize = 64;
 const HEADS: usize = 1;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
@@ -58,8 +59,9 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-        .map(SavedFormat::id);
+    let saves =
+        ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l2dw", "l2db", "l3xw", "l3fw", "l3xb", "l3fb"]
+            .map(SavedFormat::id);
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -74,8 +76,9 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
-            let l2f = builder.new_affine("l2f", L2, L3 * 2);
+            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
+            let l2f = builder.new_affine("l2f", L2, HIDDEN * 2);
+            let l2d = builder.new_affine("l2d", HIDDEN, L3);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
 
@@ -91,14 +94,15 @@ fn main() {
             let l1_out = l1.forward(l0_out).select(buckets);
             // let l1_out = hard_swish(l1_out);
 
-            let l2x_out = l2x.forward(l1_out).select(buckets);
-            let l2f_out = l2f.forward(l1_out);
+            let l1_normed = rms_norm(builder, l1_out, L2);
+            let l2x_out = l2x.forward(l1_normed).select(buckets);
+            let l2f_out = l2f.forward(l1_normed);
             let l2_out = l2x_out + l2f_out;
             // SwiGLU: l2_out = W₁x · Swish(W₂x)
-            let l2_out = hard_swish(l2_out.slice_rows(0, L3)) * l2_out.slice_rows(L3, L3 * 2);
+            let l2_out = hard_swish(l2_out.slice_rows(0, HIDDEN)) * l2_out.slice_rows(HIDDEN, HIDDEN * 2);
 
-            // skip connexion from l1-out to l2-out:
-            let l2_out = l2_out + l1_out;
+            // down-projection + residual
+            let l2_out = l2d.forward(l2_out) + l1_out;
 
             let l3x_out = l3x.forward(l2_out).select(buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -161,12 +165,12 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
-    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
+    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l2dw", "l2db", "l3xw", "l3xb", "l3fw", "l3fb"] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "discovery".to_string(),
+        net_id: "gearbox".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -206,6 +210,14 @@ fn exp(x: ModelNode) -> ModelNode {
     let inv_sigmoid = sigmoid.abs_pow(-1.0);
     let e_minus_x = inv_sigmoid - 1.0;
     e_minus_x.abs_pow(-1.0)
+}
+
+fn rms_norm<'a>(builder: &'a ModelBuilder, x: ModelNode<'a>, dim: usize) -> ModelNode<'a> {
+    let mean_coeff = builder.new_constant(Shape::new(1, dim), &vec![1.0 / dim as f32; dim]);
+    let mean_sq = mean_coeff.matmul(x * x);
+    let inv_rms = (mean_sq + 1e-6).abs_pow(-0.5);
+    let ones_col = builder.new_constant(Shape::new(dim, 1), &vec![1.0; dim]);
+    x * ones_col.matmul(inv_rms)
 }
 
 fn hard_swish(x: ModelNode) -> ModelNode {
