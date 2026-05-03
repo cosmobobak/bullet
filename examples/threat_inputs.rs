@@ -51,7 +51,7 @@ impl inputs::SparseInputType for ThreatInputs {
         let (ntm_flip, ntm_bucket) = get(pos.opp_ksq());
 
         #[rustfmt::skip]
-        inputs::Chess768.map_features(pos, |stm, ntm| {
+        inputs::Chess768Passers.map_features(pos, |stm, ntm| {
             f(
                 ThreatInputs::TOTAL_THREATS + (stm ^ stm_flip),
                 ThreatInputs::TOTAL_THREATS + (ntm ^ ntm_flip),
