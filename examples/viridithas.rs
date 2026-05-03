@@ -58,9 +58,8 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let saves =
-        ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb", "psqtw", "psqtb"]
-            .map(SavedFormat::id);
+    let saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
+        .map(SavedFormat::id);
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -79,9 +78,6 @@ fn main() {
             let l2f = builder.new_affine("l2f", L2, L3 * 2);
             let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", L3, HEADS);
-
-            // PSQT: linear skip from board state straight to the eval
-            let psqt = builder.new_affine("psqt", inputs.num_inputs(), NUM_OUTPUT_BUCKETS * HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm).crelu().pairwise_mul();
@@ -106,9 +102,8 @@ fn main() {
 
             let l3x_out = l3x.forward(l2_out).select(buckets);
             let l3f_out = l3f.forward(l2_out);
-            let psqt_out = psqt.forward(stm).select(buckets);
 
-            let l3_out = l3x_out + l3f_out + psqt_out;
+            let l3_out = l3x_out + l3f_out;
 
             if HEADS == 3 {
                 // -------- MSE --------
@@ -166,12 +161,12 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
-    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb", "psqtw", "psqtb"] {
+    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "telegraph".to_string(),
+        net_id: "atlantis".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
