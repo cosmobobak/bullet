@@ -1,7 +1,7 @@
 use bullet_lib::{
     game::{inputs::SparseInputType as _, outputs::MaterialCount},
     nn::{
-        ModelNode, Shape,
+        InitSettings, ModelBuilder, ModelNode, Shape,
         optimiser::{AdamW, AdamWParams},
     },
     trainer::{
@@ -21,8 +21,8 @@ mod threat_inputs;
 mod threats;
 
 const L1: usize = 1024;
-const L2: usize = 32;
-const L3: usize = 32;
+const D: usize = 32;
+const PROJ: usize = 4;
 const HEADS: usize = 1;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
@@ -58,8 +58,27 @@ fn main() {
     };
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
-    let saves = ["l0w", "l0b", "l1w", "l1b", "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb"]
-        .map(SavedFormat::id);
+    let saves = [
+        "l0w",
+        "l0b",
+        "l1w",
+        "l1b",
+        "l1n_g",
+        "l1n_b",
+        "l2up_xw",
+        "l2up_fw",
+        "l2up_xb",
+        "l2up_fb",
+        "l2down_xw",
+        "l2down_fw",
+        "l2down_xb",
+        "l2down_fb",
+        "l3xw",
+        "l3fw",
+        "l3xb",
+        "l3fb",
+    ]
+    .map(SavedFormat::id);
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -73,11 +92,13 @@ fn main() {
             l0.init_with_effective_input_size(20000);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * L2);
-            let l2x = builder.new_affine("l2x", L2, NUM_OUTPUT_BUCKETS * L3 * 2);
-            let l2f = builder.new_affine("l2f", L2, L3 * 2);
-            let l3x = builder.new_affine("l3x", L3, NUM_OUTPUT_BUCKETS * HEADS);
-            let l3f = builder.new_affine("l3f", L3, HEADS);
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
+            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * 4);
+            let l2up_f = builder.new_affine("l2up_f", D, D * 4);
+            let l2down_x = builder.new_affine("l2down_x", D * 4, NUM_OUTPUT_BUCKETS * D);
+            let l2down_f = builder.new_affine("l2down_f", D * 4, D);
+            let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
+            let l3f = builder.new_affine("l3f", D, HEADS);
 
             // inference
             let stm_subnet = l0.forward(stm).crelu().pairwise_mul();
@@ -89,13 +110,18 @@ fn main() {
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
-            let l1_out = hard_swish(l1_out);
+            // let l1_out = hard_swish(l1_out);
 
-            let l2x_out = l2x.forward(l1_out).select(buckets);
-            let l2f_out = l2f.forward(l1_out);
+            let l1n_out = layer_norm(builder, "l1n", l1_out);
+            let l1q_out = l1n_out.faux_quantise(32.0, false).clip_pass_through_grad(-4.0, 4.0);
+            let l2x_proj = l2up_x.forward(l1q_out).select(buckets);
+            let l2f_proj = l2up_f.forward(l1q_out);
+            let l2_proj = l2x_proj + l2f_proj;
+            let l2_proj = l2_proj.crelu();
+            let l2q_proj = l2_proj.faux_quantise(127.0, false);
+            let l2x_out = l2down_x.forward(l2q_proj).select(buckets);
+            let l2f_out = l2down_f.forward(l2q_proj);
             let l2_out = l2x_out + l2f_out;
-            // SwiGLU: l2_out = W₁x · Swish(W₂x)
-            let l2_out = hard_swish(l2_out.slice_rows(0, L3)) * l2_out.slice_rows(L3, L3 * 2);
 
             // skip connexion from l1-out to l2-out:
             let l2_out = l2_out + l1_out;
@@ -161,12 +187,27 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
-    for name in ["l2xw", "l2xb", "l2fw", "l2fb", "l3xw", "l3xb", "l3fw", "l3fb"] {
+    for name in [
+        "l1n_g",
+        "l1n_b",
+        "l2up_xw",
+        "l2up_xb",
+        "l2up_fw",
+        "l2up_fb",
+        "l2down_xw",
+        "l2down_xb",
+        "l2down_fw",
+        "l2down_fb",
+        "l3xw",
+        "l3xb",
+        "l3fw",
+        "l3fb",
+    ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "augury".to_string(),
+        net_id: "regent".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
@@ -211,4 +252,41 @@ fn exp(x: ModelNode) -> ModelNode {
 fn hard_swish(x: ModelNode) -> ModelNode {
     let gate = (x * (1.0 / 6.0) + 0.5).crelu();
     x * gate
+}
+
+fn broadcast_rows<'a>(builder: &'a ModelBuilder, scalar: ModelNode<'a>, rows: usize) -> ModelNode<'a> {
+    let ones = builder.new_constant(Shape::new(rows, 1), &vec![1.0; rows]);
+    ones.matmul(scalar)
+}
+
+fn rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
+    const EPS: f32 = 1e-5;
+    let n = x.shape().rows();
+    assert_eq!(x.shape().cols(), 1, "rms_norm expects a column vector");
+
+    // mean of squares over the feature dimension (rows), broadcast back to (n, 1)
+    let mean_sq = (x * x).reduce_sum_rows() / n as f32;
+    let inv_rms = broadcast_rows(builder, (mean_sq + EPS).abs_pow(-0.5), n);
+    let normed = x * inv_rms;
+
+    // γ as a 0-initialised weight offset by 1, so it starts at unity but trains
+    let gamma = 1.0 + builder.new_weights(&format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
+    normed * gamma
+}
+
+fn layer_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
+    const EPS: f32 = 1e-5;
+    let n = x.shape().rows();
+    assert_eq!(x.shape().cols(), 1, "layer_norm expects a column vector");
+
+    let mean = broadcast_rows(builder, x.reduce_sum_rows() / n as f32, n);
+    let centred = x - mean;
+
+    let var = (centred * centred).reduce_sum_rows() / n as f32;
+    let inv_std = broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
+    let normed = centred * inv_std;
+
+    let gamma = 1.0 + builder.new_weights(&format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
+    let beta = builder.new_weights(&format!("{id}_b"), Shape::new(n, 1), InitSettings::Zeroed);
+    normed * gamma + beta
 }
