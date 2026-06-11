@@ -14,7 +14,7 @@ pub fn tystr(dtype: DType) -> &'static str {
 
 pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
     match op {
-        PointwiseOp::Buffer { .. } | PointwiseOp::VarSize => None,
+        PointwiseOp::Buffer { .. } => None,
         PointwiseOp::Div => Some("const int OUT1 = IN1 / IN2;".into()),
         PointwiseOp::Rem => Some("const int OUT1 = IN1 % IN2;".into()),
         PointwiseOp::Read(io) => {
@@ -31,7 +31,7 @@ pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
         PointwiseOp::ConditionalRead(io, value) => {
             let ty = tystr(io.buf_ty);
             let vl = match value {
-                DValue::F32(x) => x.to_string(),
+                DValue::F32(x) => format!("{x:E}"),
                 DValue::I32(x) => x.to_string(),
             };
 
@@ -74,7 +74,7 @@ pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
         PointwiseOp::Constant { value, p2size } => {
             let ty = tystr(value.dtype());
             let vl = match value {
-                DValue::F32(x) => x.to_string(),
+                DValue::F32(x) => format!("{x:E}"),
                 DValue::I32(x) => x.to_string(),
             };
 
@@ -85,28 +85,14 @@ pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
                 3.. => None,
             }
         }
-        PointwiseOp::EvalSize(size) => {
-            let mut size_str = format!("{}", size.factor());
-            for _ in 0..size.var_power() {
-                size_str += " * IN1";
-            }
-
-            Some(format!("const int OUT1 = {size_str};"))
-        }
-        PointwiseOp::ThreadId => {
-            let mut size_str = format!("{}", size.factor());
-            for _ in 0..size.var_power() {
-                size_str += " * IN1";
-            }
-
-            Some(format!(
-                "\
+        PointwiseOp::ThreadId => Some(format!(
+            "\
                 const int idx_in_grid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;\n\
                 const int OUT1 = idx_in_grid * blockDim.x + threadIdx.x;\n\
-                if (OUT1 >= ({size_str})) return;\
-            "
-            ))
-        }
+                if (OUT1 >= ({})) return;\
+            ",
+            size.get()
+        )),
         PointwiseOp::Broadcast(ty, p2size) => {
             let ty = tystr(ty);
             match p2size.get() {
@@ -209,35 +195,40 @@ pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
                 3.. => None,
             }
         }
-        PointwiseOp::SpMM { nnz, rows, cols, ty, p2size } => {
+        PointwiseOp::SpMM { nnz, rows, cols, stride, offset, ty, p2size } => {
             let ty = tystr(ty);
             match p2size {
                 0 => Some(format!(
                     "\
                     {ty} OUT1 = 0;
                     int UNIQ1 = IN3 / {rows};
-                    int UNIQ2 = IN3 % {rows};
+                    int UNIQ2 = {offset} + IN3 % {rows};
 
                     for (int i = 0; i < {nnz}; i++) {{
                         const int j = IN2[{nnz} * UNIQ1 + i];
                         if (j < 0 || j >= {cols}) break;
-                        OUT1 += IN1[j * {rows} + UNIQ2];
+                        OUT1 += IN1[j * {stride} + UNIQ2];
                     }}"
                 )),
                 1 => {
+                    assert_eq!(rows % 2, 0);
+                    assert_eq!(offset % 2, 0);
+                    assert_eq!(stride % 2, 0);
                     let m = rows / 2;
+                    let o = offset / 2;
+                    let s = stride / 2;
                     Some(format!(
                         "\
                         {ty}2 OUT1 = make_{ty}2(0, 0);
                         int UNIQ1 = IN3 / {m};
-                        int UNIQ2 = IN3 % {m};
+                        int UNIQ2 = {o} + IN3 % {m};
 
                         for (int i = 0; i < {nnz}; i++) {{
                             const int j = IN2[{nnz} * UNIQ1 + i];
 
                             if (j < 0 || j >= {cols}) break;
 
-                            const {ty}2 a = reinterpret_cast<{ty}2*>(IN1)[j * {m} + UNIQ2];
+                            const {ty}2 a = reinterpret_cast<{ty}2*>(IN1)[j * {s} + UNIQ2];
 
                             OUT1.x += a.x;
                             OUT1.y += a.y;
@@ -245,19 +236,24 @@ pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
                     ))
                 }
                 2 => {
+                    assert_eq!(rows % 4, 0);
+                    assert_eq!(offset % 4, 0);
+                    assert_eq!(stride % 4, 0);
                     let m = rows / 4;
+                    let o = offset / 4;
+                    let s = stride / 4;
                     Some(format!(
                         "\
                         {ty}4 OUT1 = make_{ty}4(0, 0, 0, 0);
                         int UNIQ1 = IN3 / {m};
-                        int UNIQ2 = IN3 % {m};
+                        int UNIQ2 = {o} + IN3 % {m};
 
                         for (int i = 0; i < {nnz}; i++) {{
                             const int j = IN2[{nnz} * UNIQ1 + i];
 
                             if (j < 0 || j >= {cols}) break;
 
-                            const {ty}4 a = reinterpret_cast<{ty}4*>(IN1)[j * {m} + UNIQ2];
+                            const {ty}4 a = reinterpret_cast<{ty}4*>(IN1)[j * {s} + UNIQ2];
 
                             OUT1.x += a.x;
                             OUT1.y += a.y;
@@ -269,16 +265,16 @@ pub fn code_str(op: PointwiseOp, size: Size) -> Option<String> {
                 3.. => None,
             }
         }
-        PointwiseOp::SpMMT { nnz, rows, cols, .. } => Some(format!(
+        PointwiseOp::SpMMT { nnz, rows, cols, stride, offset, .. } => Some(format!(
             "\
                 if (IN4 != 0) {{
                     int UNIQ1 = IN3 / {rows};
-                    int UNIQ2 = IN3 % {rows};
+                    int UNIQ2 = {offset} + IN3 % {rows};
 
                     for (int i = 0; i < {nnz}; i++) {{
                         const int j = IN2[{nnz} * UNIQ1 + i];
                         if (j < 0 || j >= {cols}) break;
-                        atomicAdd(IN1 + j * {rows} + UNIQ2, IN4);
+                        atomicAdd(IN1 + j * {stride} + UNIQ2, IN4);
                     }}
                 }}"
         )),
