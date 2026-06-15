@@ -111,7 +111,7 @@ fn main() {
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
-            // let l1_out = hard_swish(l1_out);
+            let l1_out = hard_swish(l1_out);
 
             let l1n_out = layer_norm(builder, "l1n", l1_out);
             let l1q_out = l1n_out; //.faux_quantise(32.0, false).clip_pass_through_grad(-4.0, 4.0);
