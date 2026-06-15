@@ -113,12 +113,13 @@ fn main() {
             // let l1_out = hard_swish(l1_out);
 
             let l1n_out = layer_norm(builder, "l1n", l1_out);
-            let l1q_out = l1n_out.faux_quantise(32.0, false).clip_pass_through_grad(-4.0, 4.0);
+            let l1q_out = l1n_out; //.faux_quantise(32.0, false).clip_pass_through_grad(-4.0, 4.0);
             let l2x_proj = l2up_x.forward(l1q_out).select(buckets);
             let l2f_proj = l2up_f.forward(l1q_out);
             let l2_proj = l2x_proj + l2f_proj;
-            let l2_proj = l2_proj.crelu();
-            let l2q_proj = l2_proj.faux_quantise(127.0, false);
+            // let l2_proj = l2_proj.crelu();
+            let l2_proj = hard_swish(l2_proj);
+            let l2q_proj = l2_proj; //.faux_quantise(127.0, false);
             let l2x_out = l2down_x.forward(l2q_proj).select(buckets);
             let l2f_out = l2down_f.forward(l2q_proj);
             let l2_out = l2x_out + l2f_out;
@@ -207,7 +208,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "regent".to_string(),
+        net_id: "winterhall".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
