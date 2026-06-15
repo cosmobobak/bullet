@@ -22,7 +22,7 @@ mod threats;
 
 const L1: usize = 1024;
 const D: usize = 32;
-const PROJ: usize = 4;
+const PROJ: usize = 1;
 const HEADS: usize = 1;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
@@ -93,10 +93,10 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
-            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * 4);
-            let l2up_f = builder.new_affine("l2up_f", D, D * 4);
-            let l2down_x = builder.new_affine("l2down_x", D * 4, NUM_OUTPUT_BUCKETS * D);
-            let l2down_f = builder.new_affine("l2down_f", D * 4, D);
+            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
+            let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
+            let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
+            let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
             let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", D, HEADS);
 
@@ -113,16 +113,20 @@ fn main() {
             let l1_out = l1.forward(l0_out).select(buckets);
             let l1_out = hard_swish(l1_out);
 
-            let l1n_out = layer_norm(builder, "l1n", l1_out);
-            let l1q_out = l1n_out; //.faux_quantise(32.0, false).clip_pass_through_grad(-4.0, 4.0);
-            let l2x_proj = l2up_x.forward(l1q_out).select(buckets);
-            let l2f_proj = l2up_f.forward(l1q_out);
+            // let l1n_out = rms_norm(builder, "l1n", l1_out);
+            let l1n_out = l1_out; // todo: test norm.
+
+            // up-projection:
+            let l2x_proj = l2up_x.forward(l1n_out).select(buckets);
+            let l2f_proj = l2up_f.forward(l1n_out);
             let l2_proj = l2x_proj + l2f_proj;
-            // let l2_proj = l2_proj.crelu();
-            let l2_proj = hard_swish(l2_proj);
-            let l2q_proj = l2_proj; //.faux_quantise(127.0, false);
-            let l2x_out = l2down_x.forward(l2q_proj).select(buckets);
-            let l2f_out = l2down_f.forward(l2q_proj);
+            // activation:
+            let l2_proj_gate = hard_swish(l2_proj.slice_rows(0, D * PROJ));
+            let l2_proj_id = l2_proj.slice_rows(D * PROJ, D * PROJ * 2);
+            let l2_proj = l2_proj_gate * l2_proj_id;
+            // down-projection:
+            let l2x_out = l2down_x.forward(l2_proj).select(buckets);
+            let l2f_out = l2down_f.forward(l2_proj);
             let l2_out = l2x_out + l2f_out;
 
             // skip connexion from l1-out to l2-out:
@@ -272,7 +276,7 @@ fn rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelN
     let normed = x * inv_rms;
 
     // γ as a 0-initialised weight offset by 1, so it starts at unity but trains
-    let gamma = 1.0 + builder.new_weights(&format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
+    let gamma = 1.0 + builder.new_weights(format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
     normed * gamma
 }
 
@@ -288,7 +292,7 @@ fn layer_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> Mode
     let inv_std = broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
     let normed = centred * inv_std;
 
-    let gamma = 1.0 + builder.new_weights(&format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
-    let beta = builder.new_weights(&format!("{id}_b"), Shape::new(n, 1), InitSettings::Zeroed);
+    let gamma = 1.0 + builder.new_weights(format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
+    let beta = builder.new_weights(format!("{id}_b"), Shape::new(n, 1), InitSettings::Zeroed);
     normed * gamma + beta
 }
