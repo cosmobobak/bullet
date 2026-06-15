@@ -16,11 +16,15 @@ pub enum DataLoadingError {
 }
 
 pub trait DataLoader: Send + Sync + 'static {
-    fn map_batches<F: FnMut(PreparedBatchHost) -> bool>(self, batch_size: usize, f: F) -> Result<(), DataLoadingError>;
+    fn map_batches<F: FnMut(PreparedBatchHost) -> bool>(
+        self,
+        start_batch: usize,
+        batch_size: usize,
+        f: F,
+    ) -> Result<(), DataLoadingError>;
 }
 
 pub struct PreparedBatchHost {
-    pub batch_size: usize,
     pub inputs: BTreeMap<String, TValue>,
 }
 

@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use bullet_compiler::model::{ModelBuilder, ModelNode, Shape};
 use bullet_gpu::runtime::Device;
 use bullet_trainer::{
-    Trainer,
     model::{ModelDefinition, ModelWeights, SavedFormat},
     optimiser::Optimiser,
 };
@@ -11,7 +10,7 @@ use bullet_trainer::{
 use crate::{
     game::{inputs::SparseInputType, outputs::OutputBuckets},
     nn::{ExecutionContext, optimiser::OptimiserType},
-    value::{ValueTrainerState, loader::TargetType},
+    value::ValueTrainerState,
 };
 
 use super::{B, ValueTrainer};
@@ -28,10 +27,8 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     blend_getter: B<I>,
     weight_getter: Option<Wgt<I>>,
     loss_fn: Option<LossFn>,
-    factorised: Vec<String>,
-    wdl_output: TargetType,
+    wdl_output: bool,
     use_win_rate_model: bool,
-    print_ir: bool,
     seed: u64,
 }
 
@@ -49,10 +46,8 @@ where
             blend_getter: |_, wdl| wdl,
             weight_getter: None,
             loss_fn: None,
-            wdl_output: TargetType::Value,
+            wdl_output: false,
             use_win_rate_model: false,
-            factorised: Vec::new(),
-            print_ir: false,
             seed: 198273612,
         }
     }
@@ -76,13 +71,13 @@ where
     }
 
     pub fn wdl_output(mut self) -> Self {
-        self.wdl_output = TargetType::WDL;
+        self.wdl_output = true;
         self
     }
 
-    pub fn full_output(mut self) -> Self {
-        self.wdl_output = TargetType::ValueAndWDL;
-        self
+    pub fn full_output(self) -> Self {
+        let _ = self;
+        unimplemented!()
     }
 
     pub fn save_format(mut self, fmt: &[SavedFormat]) -> Self {
@@ -99,19 +94,6 @@ where
 
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
-        self
-    }
-
-    pub fn mark_input_factorised(mut self, list: &[&str]) -> Self {
-        for id in list {
-            self.factorised.push(id.to_string());
-        }
-
-        self
-    }
-
-    pub fn print_ir(mut self) -> Self {
-        self.print_ir = true;
         self
     }
 
@@ -147,9 +129,8 @@ where
         let builder = ModelBuilder::default();
 
         let output_size = match self.wdl_output {
-            TargetType::Value => 1,
-            TargetType::WDL => 3,
-            TargetType::ValueAndWDL => 4,
+            false => 1,
+            true => 3,
         };
 
         let targets = builder.new_dense_input("targets", (output_size, 1));
@@ -163,22 +144,22 @@ where
         loss = loss.reduce_sum_batch();
 
         let definition = ModelDefinition::new(builder.ir().clone(), Some(loss.node()), [(out.node(), "output".into())]);
-        let weights = ModelWeights::new(definition.ir(), self.seed);
+        let weights = ModelWeights::new(&definition, self.seed);
         let device = Device::<ExecutionContext>::new(0).unwrap();
 
-        let optimiser = Optimiser::new(definition, weights, device, Default::default()).unwrap();
-
-        let state = ValueTrainerState {
-            input_getter: input_getter.clone(),
-            output_getter: buckets,
-            blend_getter: self.blend_getter,
-            weight_getter: self.weight_getter,
-            use_win_rate_model: self.use_win_rate_model,
-            wdl: self.wdl_output,
-            saved_format,
-        };
-
-        ValueTrainer(Trainer::new(optimiser, state))
+        ValueTrainer {
+            optimiser: Optimiser::new(definition, weights, device, Default::default()).unwrap(),
+            state: ValueTrainerState {
+                input_getter: input_getter.clone(),
+                output_getter: buckets,
+                blend_getter: self.blend_getter,
+                weight_getter: self.weight_getter,
+                use_win_rate_model: self.use_win_rate_model,
+                wdl: self.wdl_output,
+                saved_format,
+            },
+            evaluator: None,
+        }
     }
 
     fn build_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
@@ -257,10 +238,8 @@ where
             blend_getter: self.blend_getter,
             weight_getter: self.weight_getter,
             loss_fn: self.loss_fn,
-            factorised: self.factorised,
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
-            print_ir: self.print_ir,
             seed: self.seed,
         }
     }
@@ -286,10 +265,8 @@ where
             blend_getter: self.blend_getter,
             weight_getter: self.weight_getter,
             loss_fn: self.loss_fn,
-            factorised: self.factorised,
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
-            print_ir: self.print_ir,
             seed: self.seed,
         }
     }
@@ -312,6 +289,17 @@ where
             f(builder, stm)
         })
     }
+
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
+    where
+        F: for<'a> Fn(Nb<'a>, Nbn<'a>, Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            f(builder, stm, targets)
+        })
+    }
 }
 
 impl<O, I> ValueTrainerBuilder<O, I, DualPerspective, NoOutputBuckets>
@@ -327,6 +315,18 @@ where
             let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
             let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
             f(builder, stm, ntm)
+        })
+    }
+
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
+    where
+        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
+            f(builder, (stm, ntm), targets)
         })
     }
 }
@@ -345,6 +345,18 @@ where
             let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
             let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
             f(builder, stm, buckets)
+        })
+    }
+
+    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
+    where
+        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
+    {
+        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
+        self.build_custom_internal(|inputs, nnz, targets, builder| {
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
+            f(builder, (stm, buckets), targets)
         })
     }
 }
@@ -366,68 +378,7 @@ where
             f(builder, stm, ntm, buckets)
         })
     }
-}
 
-impl<O, I> ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
-where
-    I: SparseInputType,
-    O: OptimiserType,
-{
-    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
-    where
-        F: for<'a> Fn(Nb<'a>, Nbn<'a>, Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
-    {
-        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
-        self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
-            f(builder, stm, targets)
-        })
-    }
-}
-
-impl<O, I> ValueTrainerBuilder<O, I, DualPerspective, NoOutputBuckets>
-where
-    I: SparseInputType,
-    O: OptimiserType,
-{
-    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, NoOutputBuckets>
-    where
-        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
-    {
-        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
-        self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
-            let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
-            f(builder, (stm, ntm), targets)
-        })
-    }
-}
-
-impl<O, I, Out> ValueTrainerBuilder<O, I, SinglePerspective, OutputBucket<Out>>
-where
-    I: SparseInputType,
-    O: OptimiserType,
-    Out: OutputBuckets<I::RequiredDataType>,
-{
-    pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
-    where
-        F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
-    {
-        assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
-        self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
-            let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
-            f(builder, (stm, buckets), targets)
-        })
-    }
-}
-
-impl<O, I, Out> ValueTrainerBuilder<O, I, DualPerspective, OutputBucket<Out>>
-where
-    I: SparseInputType,
-    O: OptimiserType,
-    Out: OutputBuckets<I::RequiredDataType>,
-{
     pub fn build_custom<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out>
     where
         F: for<'a> Fn(Nb<'a>, (Nbn<'a>, Nbn<'a>, Nbn<'a>), Nbn<'a>) -> (Nbn<'a>, Nbn<'a>),
