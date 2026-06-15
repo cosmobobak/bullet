@@ -1,15 +1,16 @@
 use std::marker::PhantomData;
 
+use bullet_compiler::model::{ModelBuilder, ModelNode, Shape};
 use bullet_gpu::runtime::Device;
 use bullet_trainer::{
     Trainer,
-    model::{Shape, save::SavedFormat},
+    model::{ModelDefinition, ModelWeights, SavedFormat},
     optimiser::Optimiser,
 };
 
 use crate::{
     game::{inputs::SparseInputType, outputs::OutputBuckets},
-    nn::{ExecutionContext, ModelBuilder, ModelNode, optimiser::OptimiserType},
+    nn::{ExecutionContext, optimiser::OptimiserType},
     value::{ValueTrainerState, loader::TargetType},
 };
 
@@ -31,6 +32,7 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     wdl_output: TargetType,
     use_win_rate_model: bool,
     print_ir: bool,
+    seed: u64,
 }
 
 impl<O, I> Default for ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
@@ -51,6 +53,7 @@ where
             use_win_rate_model: false,
             factorised: Vec::new(),
             print_ir: false,
+            seed: 198273612,
         }
     }
 }
@@ -91,6 +94,11 @@ where
     pub fn loss_fn(mut self, f: LossFn) -> Self {
         assert!(self.loss_fn.is_none(), "Loss function already set!");
         self.loss_fn = Some(f);
+        self
+    }
+
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
         self
     }
 
@@ -143,28 +151,34 @@ where
             TargetType::WDL => 3,
             TargetType::ValueAndWDL => 4,
         };
-        let targets = builder.new_dense_input("targets", Shape::new(output_size, 1));
-        let (out, loss) = f(inputs, nnz, targets, &builder);
+
+        let targets = builder.new_dense_input("targets", (output_size, 1));
+        let (out, mut loss) = f(inputs, nnz, targets, &builder);
 
         if self.weight_getter.is_some() {
-            let entry_weights = builder.new_dense_input("entry_weights", Shape::new(1, 1));
-            let _ = entry_weights * loss;
+            let entry_weights = builder.new_dense_input("entry_weights", (1, 1));
+            loss = entry_weights * loss;
         }
 
-        let model = builder.build(Device::<ExecutionContext>::new(0).unwrap(), loss, out);
+        loss = loss.reduce_sum_batch();
 
-        ValueTrainer(Trainer {
-            optimiser: Optimiser::new(model, Default::default()).unwrap(),
-            state: ValueTrainerState {
-                input_getter: input_getter.clone(),
-                output_getter: buckets,
-                blend_getter: self.blend_getter,
-                weight_getter: self.weight_getter,
-                use_win_rate_model: self.use_win_rate_model,
-                wdl: self.wdl_output,
-                saved_format,
-            },
-        })
+        let definition = ModelDefinition::new(builder.ir().clone(), Some(loss.node()), [(out.node(), "output".into())]);
+        let weights = ModelWeights::new(definition.ir(), self.seed);
+        let device = Device::<ExecutionContext>::new(0).unwrap();
+
+        let optimiser = Optimiser::new(definition, weights, device, Default::default()).unwrap();
+
+        let state = ValueTrainerState {
+            input_getter: input_getter.clone(),
+            output_getter: buckets,
+            blend_getter: self.blend_getter,
+            weight_getter: self.weight_getter,
+            use_win_rate_model: self.use_win_rate_model,
+            wdl: self.wdl_output,
+            saved_format,
+        };
+
+        ValueTrainer(Trainer::new(optimiser, state))
     }
 
     fn build_internal<F>(self, f: F) -> ValueTrainer<O::Optimiser, I, Out::Inner>
@@ -247,6 +261,7 @@ where
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
             print_ir: self.print_ir,
+            seed: self.seed,
         }
     }
 }
@@ -275,6 +290,7 @@ where
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
             print_ir: self.print_ir,
+            seed: self.seed,
         }
     }
 }
@@ -292,7 +308,7 @@ where
         F: for<'a> Fn(Nb<'a>, Nbn<'a>) -> Nbn<'a>,
     {
         self.build_internal(|inputs, nnz, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
             f(builder, stm)
         })
     }
@@ -308,8 +324,8 @@ where
         F: for<'a> Fn(Nb<'a>, Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
     {
         self.build_internal(|inputs, nnz, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
-            let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
             f(builder, stm, ntm)
         })
     }
@@ -326,8 +342,8 @@ where
         F: for<'a> Fn(Nb<'a>, Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
     {
         self.build_internal(|inputs, nnz, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
-            let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
             f(builder, stm, buckets)
         })
     }
@@ -344,9 +360,9 @@ where
         F: for<'a> Fn(Nb<'a>, Nbn<'a>, Nbn<'a>, Nbn<'a>) -> Nbn<'a>,
     {
         self.build_internal(|inputs, nnz, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
-            let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
-            let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
             f(builder, stm, ntm, buckets)
         })
     }
@@ -363,7 +379,7 @@ where
     {
         assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
         self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
             f(builder, stm, targets)
         })
     }
@@ -380,8 +396,8 @@ where
     {
         assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
         self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
-            let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
             f(builder, (stm, ntm), targets)
         })
     }
@@ -399,8 +415,8 @@ where
     {
         assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
         self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
-            let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
             f(builder, (stm, buckets), targets)
         })
     }
@@ -418,9 +434,9 @@ where
     {
         assert!(self.loss_fn.is_none(), "Can't specify loss function separately!");
         self.build_custom_internal(|inputs, nnz, targets, builder| {
-            let stm = builder.new_sparse_input("stm", Shape::new(inputs, 1), nnz);
-            let ntm = builder.new_sparse_input("nstm", Shape::new(inputs, 1), nnz);
-            let buckets = builder.new_sparse_input("buckets", Shape::new(Out::BUCKETS, 1), 1);
+            let stm = builder.new_sparse_input("stm", (inputs, 1), nnz);
+            let ntm = builder.new_sparse_input("nstm", (inputs, 1), nnz);
+            let buckets = builder.new_sparse_input("buckets", (Out::BUCKETS, 1), 1);
             f(builder, (stm, ntm, buckets), targets)
         })
     }

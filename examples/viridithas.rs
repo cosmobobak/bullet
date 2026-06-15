@@ -101,8 +101,9 @@ fn main() {
             let l3f = builder.new_affine("l3f", D, HEADS);
 
             // inference
-            let stm_subnet = l0.forward(stm).crelu().pairwise_mul();
-            let ntm_subnet = l0.forward(ntm).crelu().pairwise_mul();
+            let ft = |input, start, end| l0.slice(start, end).forward(input).crelu();
+            let stm_subnet = ft(stm, 0, L1 / 2) * ft(stm, L1 / 2, L1);
+            let ntm_subnet = ft(ntm, 0, L1 / 2) * ft(ntm, L1 / 2, L1);
             let l0_out = stm_subnet.concat(ntm_subnet);
 
             // L₁-norm penalty on accumulator (mean, since values are non-negative):
