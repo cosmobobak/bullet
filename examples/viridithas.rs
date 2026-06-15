@@ -63,8 +63,8 @@ fn main() {
         "l0b",
         "l1w",
         "l1b",
-        "l1n_g",
-        "l1n_b",
+        // "l1n_g",
+        // "l1n_b",
         "l2up_xw",
         "l2up_fw",
         "l2up_xb",
@@ -194,8 +194,8 @@ fn main() {
     // don't bother clipping the float layers
     let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
     for name in [
-        "l1n_g",
-        "l1n_b",
+        // "l1n_g",
+        // "l1n_b",
         "l2up_xw",
         "l2up_xb",
         "l2up_fw",
