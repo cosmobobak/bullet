@@ -97,5 +97,5 @@ fn main() {
         lr_schedule: Box::new(|_, _| 0.001),
     };
 
-    train(&mut optimiser, schedule, loader, |_, _, _, _| {}, |_, _| {}).unwrap();
+    train(&mut optimiser, schedule, loader, |_, _, _, _, _| {}, |_, _| {}).unwrap();
 }

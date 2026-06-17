@@ -5,7 +5,7 @@ mod schedule;
 pub use dataloader::{DataLoader, DataLoadingError, HostPool, PreparedBatchHost};
 pub use schedule::{TrainingSchedule, TrainingSteps};
 
-use std::{collections::BTreeMap, sync::mpsc, thread, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, sync::mpsc, thread, time::Instant};
 
 use bullet_compiler::{
     model::Layout,
@@ -86,7 +86,7 @@ pub fn train<G: Gpu, O: OptimiserState<G>>(
     optimiser: &mut Optimiser<G, O>,
     schedule: TrainingSchedule,
     dataloader: impl DataLoader,
-    mut batch_callback: impl FnMut(&mut Optimiser<G, O>, usize, usize, f32),
+    mut batch_callback: impl FnMut(&mut Optimiser<G, O>, usize, usize, f32, &BTreeMap<String, Arc<Buffer<G>>>),
     mut superbatch_callback: impl FnMut(&mut Optimiser<G, O>, usize),
 ) -> Result<(), TrainingError<G>> {
     let timer = Instant::now();
@@ -258,7 +258,7 @@ pub fn train<G: Gpu, O: OptimiserState<G>>(
 
         curr_batch += 1;
 
-        batch_callback(optimiser, superbatch, curr_batch, error);
+        batch_callback(optimiser, superbatch, curr_batch, error, &gradients);
 
         if curr_batch % steps.batches_per_superbatch == 0 {
             let error = running_loss / steps.batches_per_superbatch as f32;

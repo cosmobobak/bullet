@@ -193,7 +193,7 @@ where
             &mut self.optimiser,
             run::TrainingSchedule { steps, log_rate: 128, lr_schedule: Box::new(|a, b| lr_scheduler.lr(a, b)) },
             dataloader,
-            |_, superbatch, curr_batch, error| {
+            |_, superbatch, curr_batch, error, gradients| {
                 loss_sum += error;
                 ticks_since_last += 1.0;
 
@@ -202,7 +202,16 @@ where
                 {
                     let normalised_loss = loss_sum / f32::min(ticks_since_last, steps.batches_per_superbatch as f32);
 
-                    error_record.borrow_mut().push((superbatch, curr_batch, normalised_loss));
+                    // Global L2 norm of the gradient. The buffers hold the batch-summed gradient,
+                    // so divide by the batch size to report the mean gradient the optimiser applies.
+                    let mut sum_sq = 0.0f64;
+                    for grad in gradients.values() {
+                        let TValue::F32(values) = grad.to_host().unwrap() else { panic!() };
+                        sum_sq += values.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>();
+                    }
+                    let grad_norm = (sum_sq.sqrt() / f64::from(steps.batch_size as u32)) as f32;
+
+                    error_record.borrow_mut().push((superbatch, curr_batch, normalised_loss, grad_norm));
 
                     loss_sum = 0.0;
                     ticks_since_last = 0.0;

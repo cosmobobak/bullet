@@ -12,12 +12,12 @@ use bullet_trainer::{
 
 use crate::{game::inputs::SparseInputType, value::ValueTrainer};
 
-pub fn write_losses(path: &str, error_record: &[(usize, usize, f32)]) {
+pub fn write_losses(path: &str, error_record: &[(usize, usize, f32, f32)]) {
     use std::io::Write;
 
     let mut writer = std::io::BufWriter::new(std::fs::File::create(path).expect("Opening log file failed!"));
-    for (superbatch, batch, loss) in error_record {
-        writeln!(writer, "{superbatch},{batch},{loss}",).expect("Writing to log file failed!");
+    for (superbatch, batch, loss, grad_norm) in error_record {
+        writeln!(writer, "{superbatch},{batch},{loss},{grad_norm}",).expect("Writing to log file failed!");
     }
 }
 
