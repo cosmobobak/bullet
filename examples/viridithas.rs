@@ -59,24 +59,13 @@ fn main() {
     let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
     let saves = [
-        "l0w",
-        "l0b",
-        "l1w",
-        "l1b",
-        // "l1n_g",
-        // "l1n_b",
-        "l2up_xw",
-        "l2up_fw",
-        "l2up_xb",
-        "l2up_fb",
-        "l2down_xw",
-        "l2down_fw",
-        "l2down_xb",
-        "l2down_fb",
-        "l3xw",
-        "l3fw",
-        "l3xb",
-        "l3fb",
+        "l0w", "l0b", "l1w", "l1b", // "l1n_g", "l1n_b",
+        "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
+        // "l2down_xw",
+        // "l2down_fw",
+        // "l2down_xb",
+        // "l2down_fb",
+        "l3xw", "l3fw", "l3xb", "l3fb",
     ]
     .map(SavedFormat::id);
 
@@ -95,8 +84,8 @@ fn main() {
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
             let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
             let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
-            let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
-            let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
+            // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
+            // let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
             let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", D, HEADS);
 
@@ -125,9 +114,10 @@ fn main() {
             let l2_proj_id = l2_proj.slice_rows(D * PROJ, D * PROJ * 2);
             let l2_proj = l2_proj_gate * l2_proj_id;
             // down-projection:
-            let l2x_out = l2down_x.forward(l2_proj).select(buckets);
-            let l2f_out = l2down_f.forward(l2_proj);
-            let l2_out = l2x_out + l2f_out;
+            // let l2x_out = l2down_x.forward(l2_proj).select(buckets);
+            // let l2f_out = l2down_f.forward(l2_proj);
+            // let l2_out = l2x_out + l2f_out;
+            let l2_out = l2_proj;
 
             // skip connexion from l1-out to l2-out:
             let l2_out = l2_out + l1_out;
@@ -196,24 +186,18 @@ fn main() {
     for name in [
         // "l1n_g",
         // "l1n_b",
-        "l2up_xw",
-        "l2up_xb",
-        "l2up_fw",
-        "l2up_fb",
-        "l2down_xw",
-        "l2down_xb",
-        "l2down_fw",
-        "l2down_fb",
-        "l3xw",
-        "l3xb",
-        "l3fw",
-        "l3fb",
+        "l2up_xw", "l2up_xb", "l2up_fw", "l2up_fb",
+        // "l2down_xw",
+        // "l2down_xb",
+        // "l2down_fw",
+        // "l2down_fb",
+        "l3xw", "l3xb", "l3fw", "l3fb",
     ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
     let schedule = TrainingSchedule {
-        net_id: "winterhall".to_string(),
+        net_id: "atlantis-replication".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
