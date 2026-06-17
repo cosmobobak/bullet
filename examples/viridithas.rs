@@ -12,11 +12,12 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
-use crate::threat_inputs::ThreatInputs;
+use crate::pawn_pawn_inputs::PawnPawnInputs;
 
 mod attacks;
 mod indices;
 mod offsets;
+mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
@@ -42,7 +43,7 @@ const BUCKET_LAYOUT: [usize; 32] = [
 const BATCH_GLOM: usize = 4;
 
 fn main() {
-    let inputs = ThreatInputs::new(BUCKET_LAYOUT);
+    let inputs = PawnPawnInputs::new(BUCKET_LAYOUT, pawn_pawn_inputs::three_file_band_mask());
 
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
@@ -197,7 +198,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "atlantis-replication".to_string(),
+        net_id: "polysyndetic".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
