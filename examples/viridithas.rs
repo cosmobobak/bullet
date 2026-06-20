@@ -198,7 +198,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "polysyndetic".to_string(),
+        net_id: "hypersyndetic".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
