@@ -2,7 +2,7 @@ use bullet_lib::{
     game::{inputs::SparseInputType as _, outputs::MaterialCount},
     nn::{
         InitSettings, ModelBuilder, ModelNode, Shape,
-        optimiser::{AdamW, AdamWParams},
+        optimiser::{Ranger, RangerParams},
     },
     trainer::{
         save::SavedFormat,
@@ -74,7 +74,7 @@ fn main() {
         .dual_perspective()
         .inputs(inputs)
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
-        .optimiser(AdamW)
+        .optimiser(Ranger)
         .save_format(&saves)
         .build_custom(|builder, (stm, ntm, buckets), targets| {
             // input layer factoriser
@@ -175,15 +175,15 @@ fn main() {
         });
 
     let default_optimiser_params =
-        AdamWParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
-    let l0w_optimiser_params = AdamWParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
+        RangerParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
+    let l0w_optimiser_params = RangerParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
     let l1w_clip = 0.99 * 255.0 * 255.0 / (256.0 * 256.0);
-    let l1w_optimiser_params = AdamWParams { min_weight: -l1w_clip, max_weight: l1w_clip, ..default_optimiser_params };
+    let l1w_optimiser_params = RangerParams { min_weight: -l1w_clip, max_weight: l1w_clip, ..default_optimiser_params };
     trainer.optimiser.set_params(default_optimiser_params);
     trainer.optimiser.set_params_for_weight("l0w", l0w_optimiser_params);
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
-    let no_clipping = AdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
+    let no_clipping = RangerParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
     for name in [
         // "l1n_g",
         // "l1n_b",
@@ -198,7 +198,7 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "hypersyndetic".to_string(),
+        net_id: "outlander".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384 * BATCH_GLOM,
