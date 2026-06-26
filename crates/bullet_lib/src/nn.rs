@@ -18,12 +18,18 @@ pub type ExecutionContext = bullet_gpu::runtime::mock::MockGpu;
 pub mod optimiser {
     use super::ExecutionContext;
 
-    use bullet_trainer::optimiser::{self, OptimiserState, radam};
+    use bullet_trainer::optimiser::{self, OptimiserState};
 
     pub type AdamWOptimiser = optimiser::adam::AdamW<ExecutionContext>;
-    pub type RAdamOptimiser = radam::RAdam<ExecutionContext>;
+    pub type RAdamOptimiser = optimiser::radam::RAdam<ExecutionContext>;
     pub type RangerOptimiser = optimiser::ranger::Ranger<ExecutionContext>;
-    pub use optimiser::{Optimiser, adam::AdamWParams, ranger::RangerParams};
+    pub type MuonOptimiser = optimiser::muon::MuonWithAuxAdamW<ExecutionContext>;
+    pub use optimiser::{
+        Optimiser,
+        adam::AdamWParams,
+        muon::{MuonParams, MuonWithAuxAdamWParams},
+        ranger::RangerParams,
+    };
 
     pub trait OptimiserType: Default {
         type Optimiser: OptimiserState<ExecutionContext>;
@@ -45,6 +51,19 @@ pub mod optimiser {
     pub struct Ranger;
     impl OptimiserType for Ranger {
         type Optimiser = RangerOptimiser;
+    }
+
+    /// Muon (with auxiliary AdamW for non-matrix / excluded weights).
+    ///
+    /// ```ignore
+    /// use bullet_lib::nn::optimiser::MuonWithAuxAdamParams;
+    /// let exclude = MuonWithAuxAdamParams { use_muon: false, ..Default::default() };
+    /// trainer.optimiser.set_params_for_weight("l0w", exclude);
+    /// ```
+    #[derive(Default)]
+    pub struct Muon;
+    impl OptimiserType for Muon {
+        type Optimiser = MuonOptimiser;
     }
 
     #[derive(Clone, Copy, Debug)]

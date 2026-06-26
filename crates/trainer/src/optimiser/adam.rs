@@ -3,7 +3,10 @@ use std::{
     sync::Arc,
 };
 
-use bullet_compiler::tensor::{DType, IRTrace, TType, TValue};
+use bullet_compiler::{
+    model::Shape,
+    tensor::{DType, IRTrace, TType, TValue},
+};
 use bullet_gpu::{
     buffer::Buffer,
     kernel::{CompiledKernel, KernelSrc},
@@ -255,7 +258,9 @@ impl<G: Gpu> AdamW<G> {
 impl<G: Gpu> OptimiserState<G> for AdamW<G> {
     type Params = AdamWParams;
 
-    fn new(device: &Arc<Device<G>>, size: usize, default_params: Self::Params) -> Result<Self, G::Error> {
+    fn new(device: &Arc<Device<G>>, shape: Shape, default_params: Self::Params) -> Result<Self, G::Error> {
+        let size = shape.size();
+
         if default_params.max_weight < default_params.min_weight {
             return Err(
                 format!("Invalid clipping: {} >= {}", default_params.min_weight, default_params.max_weight).into()

@@ -5,7 +5,10 @@ use std::{
     sync::Arc,
 };
 
-use bullet_compiler::tensor::{DType, DValue, IRTrace, TType, TValue};
+use bullet_compiler::{
+    model::Shape,
+    tensor::{DType, DValue, IRTrace, TType, TValue},
+};
 use bullet_gpu::{
     buffer::Buffer,
     kernel::{CompiledKernel, KernelSrc},
@@ -264,7 +267,8 @@ pub struct RAdam<G: Gpu> {
 impl<G: Gpu> OptimiserState<G> for RAdam<G> {
     type Params = RAdamParams;
 
-    fn new(device: &Arc<Device<G>>, size: usize, default_params: Self::Params) -> Result<Self, G::Error> {
+    fn new(device: &Arc<Device<G>>, shape: Shape, default_params: Self::Params) -> Result<Self, G::Error> {
+        let size = shape.size();
         let op = default_params.build(size, device.props()).unwrap().compile(device.clone())?;
 
         Ok(Self {

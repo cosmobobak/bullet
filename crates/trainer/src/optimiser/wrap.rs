@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, fmt::Debug, marker::PhantomData, sync::Arc};
 
+use bullet_compiler::model::Shape;
 use bullet_gpu::{
     buffer::Buffer,
     runtime::{Device, Gpu, Stream},
@@ -20,8 +21,8 @@ where
 {
     type Params = P;
 
-    fn new(device: &Arc<Device<G>>, size: usize, params: Self::Params) -> Result<Self, G::Error> {
-        Ok(Self { optimiser: O::new(device, size, params.into())?, phantom_data: PhantomData })
+    fn new(device: &Arc<Device<G>>, shape: Shape, params: Self::Params) -> Result<Self, G::Error> {
+        Ok(Self { optimiser: O::new(device, shape, params.into())?, phantom_data: PhantomData })
     }
 
     fn update<'a>(

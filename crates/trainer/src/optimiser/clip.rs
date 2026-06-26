@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use bullet_compiler::{
     ir::IRError,
+    model::Shape,
     tensor::{DType, DValue, TType, operation::CABinary},
 };
 use bullet_gpu::{
@@ -55,10 +56,11 @@ pub struct WeightClipping<G: Gpu, S: OptimiserState<G>> {
 impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for WeightClipping<G, S> {
     type Params = WeightClippingParams<S::Params>;
 
-    fn new(device: &Arc<Device<G>>, size: usize, params: Self::Params) -> Result<Self, G::Error> {
+    fn new(device: &Arc<Device<G>>, shape: Shape, params: Self::Params) -> Result<Self, G::Error> {
+        let size = shape.size();
         Ok(Self {
             op: build_clip_op(size, params.min, params.max, device.props()).unwrap().compile(device.clone())?,
-            inner: S::new(device, size, params.inner.clone())?,
+            inner: S::new(device, shape, params.inner.clone())?,
             placement: params.placement,
             device: device.clone(),
             size,

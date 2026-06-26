@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use bullet_compiler::{
     ir::IRError,
+    model::Shape,
     tensor::{DType, TType, TValue, operation::CABinary},
 };
 use bullet_gpu::{
@@ -65,11 +66,12 @@ pub struct RangerLookahead<G: Gpu, S> {
 impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for RangerLookahead<G, S> {
     type Params = RangerLookaheadParams<S::Params>;
 
-    fn new(device: &Arc<Device<G>>, size: usize, params: Self::Params) -> Result<Self, G::Error> {
+    fn new(device: &Arc<Device<G>>, shape: Shape, params: Self::Params) -> Result<Self, G::Error> {
+        let size = shape.size();
         Ok(Self {
             op: build_ranger_op(size, params.alpha, device.props()).unwrap().compile(device.clone())?,
             slow_params: Buffer::from_host(device, &TValue::F32(vec![0.0; size]))?,
-            inner: S::new(device, size, params.inner.clone())?,
+            inner: S::new(device, shape, params.inner.clone())?,
             k: params.k,
             step: 0,
         })

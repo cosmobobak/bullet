@@ -1,6 +1,7 @@
 pub mod adam;
 pub mod clip;
 pub mod decay;
+pub mod muon;
 pub mod radam;
 pub mod ranger;
 pub mod utils;
@@ -13,7 +14,7 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
-use bullet_compiler::tensor::TValue;
+use bullet_compiler::{model::Shape, tensor::TValue};
 use bullet_gpu::{
     buffer::{Buffer, SyncOnValue},
     kernel::CompiledKernel,
@@ -65,7 +66,7 @@ type OptimiserUpdateResult<'a, G> = Result<OptimiserUpdateSync<'a, G>, <G as Gpu
 pub trait OptimiserState<G: Gpu>: Sized {
     type Params: Clone + Debug + Default;
 
-    fn new(device: &Arc<Device<G>>, size: usize, params: Self::Params) -> Result<Self, G::Error>;
+    fn new(device: &Arc<Device<G>>, shape: Shape, params: Self::Params) -> Result<Self, G::Error>;
 
     fn update<'a>(
         &'a mut self,
@@ -109,8 +110,7 @@ impl<G: Gpu, S: OptimiserState<G>> Optimiser<G, S> {
         let mut state = BTreeMap::new();
 
         for (id, value) in weights.iter() {
-            let size = value.values.size();
-            let single = S::new(&device, size, params.clone())?;
+            let single = S::new(&device, value.shape, params.clone())?;
             let old = state.insert(id.clone(), single);
             assert!(old.is_none());
         }
