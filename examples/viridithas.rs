@@ -21,6 +21,8 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
+const NET_ID: &str = "sandhi";
+
 const L1: usize = 1024;
 const D: usize = 32;
 const PROJ: usize = 1;
@@ -42,22 +44,16 @@ const BUCKET_LAYOUT: [usize; 32] = [
 
 const BATCH_GLOM: usize = 4;
 
+// values verbatim from a pawnocchio schedule
+const SUPERBATCHES_STAGE0: usize = 100;
+const SUPERBATCHES_STAGE1: usize = 800;
+const SUPERBATCHES_STAGE2: usize = 200;
+
 fn main() {
     let inputs = PawnPawnInputs::new(BUCKET_LAYOUT, pawn_pawn_inputs::three_file_band_mask());
 
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
-    let initial_lr = 0.001;
-    let superbatches = 800;
-    let lr_scheduler = lr::Warmup {
-        inner: lr::CosineDecayLR {
-            initial_lr,
-            final_lr: initial_lr * f32::powi(0.3, 5),
-            final_superbatch: superbatches,
-        },
-        warmup_batches: 1200,
-    };
-    let wdl_scheduler = wdl::LinearWDL { start: 0.4, end: 1.0 };
 
     let saves = [
         "l0w", "l0b", "l1w", "l1b", // "l1n_g", "l1n_b",
@@ -197,20 +193,6 @@ fn main() {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
-    let schedule = TrainingSchedule {
-        net_id: "outlander".to_string(),
-        eval_scale: 400.0,
-        steps: TrainingSteps {
-            batch_size: 16_384 * BATCH_GLOM,
-            batches_per_superbatch: 6104 / BATCH_GLOM,
-            start_superbatch: 1,
-            end_superbatch: superbatches,
-        },
-        wdl_scheduler,
-        lr_scheduler,
-        save_rate: 10000,
-    };
-
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
 
     let dataloader = bullet_lib::value::loader::ViriBinpackLoader::new(
@@ -225,7 +207,65 @@ fn main() {
         },
     );
 
-    trainer.run(&schedule, &settings, &dataloader);
+    const WARMUP_SBS: usize = SUPERBATCHES_STAGE0 / 2;
+    const COOLDOWN_SBS: usize = SUPERBATCHES_STAGE0 - WARMUP_SBS;
+    trainer.run(
+        &stage_schedule(
+            format!("{}-s0", NET_ID),
+            SUPERBATCHES_STAGE0,
+            wdl::ConstantWDL { value: 0.2 },
+            lr::Sequence {
+                first: lr::LinearDecayLR { initial_lr: 1e-4, final_lr: 5e-3, final_superbatch: WARMUP_SBS },
+                second: lr::LinearDecayLR { initial_lr: 5e-3, final_lr: 1e-4, final_superbatch: COOLDOWN_SBS },
+                first_scheduler_final_superbatch: WARMUP_SBS,
+            },
+        ),
+        &settings,
+        &dataloader,
+    );
+
+    trainer.run(
+        &stage_schedule(
+            format!("{}-s1", NET_ID),
+            SUPERBATCHES_STAGE1,
+            wdl::LinearWDL { start: 0.2, end: 0.5 },
+            lr::LinearDecayLR { initial_lr: 1e-3, final_lr: 1e-6, final_superbatch: SUPERBATCHES_STAGE1 },
+        ),
+        &settings,
+        &dataloader,
+    );
+
+    trainer.run(
+        &stage_schedule(
+            format!("{}-s2", NET_ID),
+            SUPERBATCHES_STAGE2,
+            wdl::ConstantWDL { value: 1.0 },
+            lr::LinearDecayLR { initial_lr: 1e-5, final_lr: 1e-7, final_superbatch: SUPERBATCHES_STAGE2 },
+        ),
+        &settings,
+        &dataloader,
+    );
+}
+
+fn stage_schedule<LR: lr::LrScheduler, WDL: wdl::WdlScheduler>(
+    net_id: String,
+    end_superbatch: usize,
+    wdl_scheduler: WDL,
+    lr_scheduler: LR,
+) -> TrainingSchedule<LR, WDL> {
+    TrainingSchedule {
+        net_id,
+        eval_scale: 400.0,
+        steps: TrainingSteps {
+            batch_size: 16_384 * BATCH_GLOM,
+            batches_per_superbatch: 6104 / BATCH_GLOM,
+            start_superbatch: 1,
+            end_superbatch,
+        },
+        wdl_scheduler,
+        lr_scheduler,
+        save_rate: 10000,
+    }
 }
 
 fn maximum<'a>(x: ModelNode<'a>, y: ModelNode<'a>) -> ModelNode<'a> {
