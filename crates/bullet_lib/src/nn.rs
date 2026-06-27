@@ -75,9 +75,9 @@ pub mod optimiser {
         pub max_weight: f32,
     }
 
-    impl From<RAdamParams> for radam::RAdamParams {
+    impl From<RAdamParams> for optimiser::radam::RAdamParams {
         fn from(value: RAdamParams) -> Self {
-            radam::RAdamParams {
+            optimiser::radam::RAdamParams {
                 beta1: value.beta1,
                 beta2: value.beta2,
                 n_sma_threshold: 5.0,
