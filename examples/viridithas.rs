@@ -21,10 +21,10 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sandhi";
+const NET_ID: &str = "sapient";
 
 const L1: usize = 1024;
-const D: usize = 32;
+const D: usize = 48;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
 
