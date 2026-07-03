@@ -21,10 +21,10 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sapient";
+const NET_ID: &str = "aeolian";
 
 const L1: usize = 1024;
-const D: usize = 48;
+const D: usize = 32;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
 
@@ -79,8 +79,8 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
-            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
-            let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
+            let l2up_x = builder.new_affine("l2up_x", D / 2, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
+            let l2up_f = builder.new_affine("l2up_f", D / 2, D * PROJ * 2);
             // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
             // let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
             let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
@@ -97,7 +97,9 @@ fn main() {
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
-            let l1_out = hard_swish(l1_out);
+            let l1_gate = hard_swish(l1_out.slice_rows(0, D / 2));
+            let l1_id = l1_out.slice_rows(D / 2, D);
+            let l1_out = l1_gate * l1_id;
 
             // let l1n_out = rms_norm(builder, "l1n", l1_out);
             let l1n_out = l1_out; // todo: test norm.
@@ -117,7 +119,8 @@ fn main() {
             let l2_out = l2_proj;
 
             // skip connexion from l1-out to l2-out:
-            let l2_out = l2_out + l1_out;
+            // let l2_out = l2_out + l1_out;
+            let l2_out = (l2_out.slice_rows(0, D / 2) + l1_out).concat(l2_out.slice_rows(D / 2, D));
 
             let l3x_out = l3x.forward(l2_out).select(buckets);
             let l3f_out = l3f.forward(l2_out);
