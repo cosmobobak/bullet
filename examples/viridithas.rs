@@ -31,6 +31,9 @@ const HEADS: usize = 1;
 // weight of the auxiliary WDL-classification cross-entropy loss
 const WDL_CE_ALPHA: f32 = 0.02;
 
+// penalty on WDL logits
+const WDL_Z_BETA: f32 = 5e-6;
+
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
 #[rustfmt::skip]
@@ -178,8 +181,9 @@ fn main() {
                 let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
                 let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
                 let wdl_loss = ones.matmul(wdl_logits.softmax_crossentropy_loss(target_wdl));
+                let wdl_logit_norm = ones.matmul(wdl_logits * wdl_logits);
 
-                let loss = value_loss + WDL_CE_ALPHA * wdl_loss + 0.005 * l0_out_norm;
+                let loss = value_loss + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm + 0.005 * l0_out_norm;
 
                 (l3_out, loss)
             }
@@ -203,8 +207,7 @@ fn main() {
         // "l2down_xb",
         // "l2down_fw",
         // "l2down_fb",
-        "l3xw", "l3xb", "l3fw", "l3fb",
-        "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
+        "l3xw", "l3xb", "l3fw", "l3fb", "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
     ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
@@ -280,7 +283,8 @@ fn stage_schedule<LR: lr::LrScheduler, WDL: wdl::WdlScheduler>(
         },
         wdl_scheduler,
         lr_scheduler,
-        save_rate: 10000,
+        // frequent enough to leave a checkpoint trail for SWA over the LR tail
+        save_rate: 25,
     }
 }
 
