@@ -21,12 +21,15 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sandhi";
+const NET_ID: &str = "janiform";
 
 const L1: usize = 1024;
 const D: usize = 32;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
+
+// weight of the auxiliary WDL-classification cross-entropy loss
+const WDL_CE_ALPHA: f32 = 0.02;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
@@ -71,6 +74,7 @@ fn main() {
         .inputs(inputs)
         .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .optimiser(Ranger)
+        .full_output()
         .save_format(&saves)
         .build_custom(|builder, (stm, ntm, buckets), targets| {
             // input layer factoriser
@@ -85,6 +89,9 @@ fn main() {
             // let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
             let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", D, HEADS);
+            // auxiliary WDL-classification head, training-only (not saved)
+            let l3wdl_x = builder.new_affine("l3wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
+            let l3wdl_f = builder.new_affine("l3wdl_f", D, 3);
 
             // inference
             let ft = |input, start, end| l0.slice(start, end).forward(input).crelu();
@@ -162,9 +169,17 @@ fn main() {
 
                 (l3_out, loss)
             } else {
-                let loss = l3_out.sigmoid().squared_error(targets);
+                // targets: row 0 is the WDL-blended value, rows 1..4 one-hot game result
+                let target_value = targets.slice_rows(0, 1);
+                let target_wdl = targets.slice_rows(1, 4);
 
-                let loss = loss + 0.005 * l0_out_norm;
+                let value_loss = l3_out.sigmoid().squared_error(target_value);
+
+                let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
+                let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
+                let wdl_loss = ones.matmul(wdl_logits.softmax_crossentropy_loss(target_wdl));
+
+                let loss = value_loss + WDL_CE_ALPHA * wdl_loss + 0.005 * l0_out_norm;
 
                 (l3_out, loss)
             }
@@ -189,6 +204,7 @@ fn main() {
         // "l2down_fw",
         // "l2down_fb",
         "l3xw", "l3xb", "l3fw", "l3fb",
+        "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
     ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
