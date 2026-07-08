@@ -10,7 +10,7 @@ use bullet_trainer::{
 use crate::{
     game::{inputs::SparseInputType, outputs::OutputBuckets},
     nn::{ExecutionContext, optimiser::OptimiserType},
-    value::ValueTrainerState,
+    value::{ValueTrainerState, loader::TargetType},
 };
 
 use super::{B, ValueTrainer};
@@ -27,7 +27,7 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     blend_getter: B<I>,
     weight_getter: Option<Wgt<I>>,
     loss_fn: Option<LossFn>,
-    wdl_output: bool,
+    wdl_output: TargetType,
     use_win_rate_model: bool,
     seed: u64,
 }
@@ -46,7 +46,7 @@ where
             blend_getter: |_, wdl| wdl,
             weight_getter: None,
             loss_fn: None,
-            wdl_output: false,
+            wdl_output: TargetType::Value,
             use_win_rate_model: false,
             seed: 198273612,
         }
@@ -71,13 +71,15 @@ where
     }
 
     pub fn wdl_output(mut self) -> Self {
-        self.wdl_output = true;
+        self.wdl_output = TargetType::WDL;
         self
     }
 
-    pub fn full_output(self) -> Self {
-        let _ = self;
-        unimplemented!()
+    /// Targets are 4 rows: row 0 is the WDL-blended value target,
+    /// rows 1..4 are a one-hot encoding of the game result (loss/draw/win).
+    pub fn full_output(mut self) -> Self {
+        self.wdl_output = TargetType::ValueAndWDL;
+        self
     }
 
     pub fn save_format(mut self, fmt: &[SavedFormat]) -> Self {
@@ -129,8 +131,9 @@ where
         let builder = ModelBuilder::default();
 
         let output_size = match self.wdl_output {
-            false => 1,
-            true => 3,
+            TargetType::Value => 1,
+            TargetType::WDL => 3,
+            TargetType::ValueAndWDL => 4,
         };
 
         let targets = builder.new_dense_input("targets", (output_size, 1));

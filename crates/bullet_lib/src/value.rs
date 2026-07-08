@@ -23,7 +23,7 @@ use crate::{
     wdl,
 };
 
-use loader::LoadableDataType;
+use loader::{LoadableDataType, TargetType};
 
 /// Value network trainer, generally for training NNUE networks.
 pub struct ValueTrainer<Opt: OptimiserState<ExecutionContext>, Inp: SparseInputType, Out> {
@@ -43,7 +43,7 @@ pub struct ValueTrainerState<Inp: SparseInputType, Out> {
     weight_getter: Option<Wgt<Inp>>,
     saved_format: Vec<SavedFormat>,
     use_win_rate_model: bool,
-    wdl: bool,
+    wdl: TargetType,
 }
 
 impl<I, O> ValueTrainerState<I, O>
@@ -67,7 +67,7 @@ where
         let inp = self.input_getter.clone();
         let out = self.output_getter;
         let wget = self.weight_getter;
-        let target_wdl = self.wdl;
+        let target_type = self.wdl;
         let blend_getter = self.blend_getter;
         let use_win_rate_model = self.use_win_rate_model;
         let rscale = 1.0 / scale;
@@ -80,7 +80,17 @@ where
             .add_sparse("stm", (num, 1), nnz)
             .add_sparse("nstm", (num, 1), nnz)
             .add_sparse("buckets", (1, 1), 1)
-            .add_dense("targets", (if target_wdl { 3 } else { 1 }, 1))
+            .add_dense(
+                "targets",
+                (
+                    match target_type {
+                        TargetType::Value => 1,
+                        TargetType::WDL => 3,
+                        TargetType::ValueAndWDL => 4,
+                    },
+                    1,
+                ),
+            )
             .add_dense("entry_weights", (1, 1));
 
         ModelInputsMapper::build(&inputs, move |pos, batch, ((((stm, ntm), buckets), targets), weights)| {
@@ -102,7 +112,7 @@ where
             buckets[0] = i32::from(out.bucket(pos));
             weights[0] = wget.map_or(1.0, |w| w(pos));
 
-            if target_wdl {
+            if target_type == TargetType::WDL {
                 for target in targets.iter_mut() {
                     *target = 0.0;
                 }
@@ -125,6 +135,14 @@ where
                 assert!(superbatch >= steps.start_superbatch);
                 assert!((0.0..=1.0).contains(&blend), "WDL proportion must be in [0, 1]");
                 targets[0] = blend * result + (1. - blend) * score;
+
+                if target_type == TargetType::ValueAndWDL {
+                    for target in targets[1..].iter_mut() {
+                        *target = 0.0;
+                    }
+
+                    targets[1 + usize::from(pos.result() as u8)] = 1.0;
+                }
             }
         })
     }
