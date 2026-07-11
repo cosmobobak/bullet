@@ -21,18 +21,18 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "janiform";
+const NET_ID: &str = "bicameral";
 
 const L1: usize = 1024;
-const D: usize = 32;
+const D: usize = 64;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
 
 // weight of the auxiliary WDL-classification cross-entropy loss
-const WDL_CE_ALPHA: f32 = 0.02;
+// const WDL_CE_ALPHA: f32 = 0.02;
 
 // penalty on WDL logits
-const WDL_Z_BETA: f32 = 5e-6;
+// const WDL_Z_BETA: f32 = 5e-6;
 
 const NUM_OUTPUT_BUCKETS: usize = 8;
 
@@ -85,7 +85,7 @@ fn main() {
             l0.init_with_effective_input_size(20000);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * (D / 2));
             let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
             let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
             // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
@@ -93,8 +93,8 @@ fn main() {
             let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
             let l3f = builder.new_affine("l3f", D, HEADS);
             // auxiliary WDL-classification head, training-only (not saved)
-            let l3wdl_x = builder.new_affine("l3wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
-            let l3wdl_f = builder.new_affine("l3wdl_f", D, 3);
+            // let l3wdl_x = builder.new_affine("l3wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
+            // let l3wdl_f = builder.new_affine("l3wdl_f", D, 3);
 
             // inference
             let ft = |input, start, end| l0.slice(start, end).forward(input).crelu();
@@ -107,7 +107,7 @@ fn main() {
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
-            let l1_out = hard_swish(l1_out);
+            let l1_out = hard_swish(l1_out).concat(l1_out * l1_out);
 
             // let l1n_out = rms_norm(builder, "l1n", l1_out);
             let l1n_out = l1_out; // todo: test norm.
@@ -174,16 +174,16 @@ fn main() {
             } else {
                 // targets: row 0 is the WDL-blended value, rows 1..4 one-hot game result
                 let target_value = targets.slice_rows(0, 1);
-                let target_wdl = targets.slice_rows(1, 4);
+                // let target_wdl = targets.slice_rows(1, 4);
 
                 let value_loss = l3_out.sigmoid().squared_error(target_value);
 
-                let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
-                let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-                let wdl_loss = ones.matmul(wdl_logits.softmax_crossentropy_loss(target_wdl));
-                let wdl_logit_norm = ones.matmul(wdl_logits * wdl_logits);
+                // let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
+                // let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
+                // let wdl_loss = ones.matmul(wdl_logits.softmax_crossentropy_loss(target_wdl));
+                // let wdl_logit_norm = ones.matmul(wdl_logits * wdl_logits);
 
-                let loss = value_loss + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm + 0.005 * l0_out_norm;
+                let loss = value_loss + 0.005 * l0_out_norm; // + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm;
 
                 (l3_out, loss)
             }
@@ -207,7 +207,8 @@ fn main() {
         // "l2down_xb",
         // "l2down_fw",
         // "l2down_fb",
-        "l3xw", "l3xb", "l3fw", "l3fb", "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
+        "l3xw", "l3xb", "l3fw", "l3fb",
+        // "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
     ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
@@ -283,8 +284,15 @@ fn stage_schedule<LR: lr::LrScheduler, WDL: wdl::WdlScheduler>(
         },
         wdl_scheduler,
         lr_scheduler,
-        // frequent enough to leave a checkpoint trail for SWA over the LR tail
-        save_rate: 25,
+        // we could set this lower for SWA,
+        // but tests indicate it doesn’t really help.
+        // https://viri.dev/test/694/
+        //   LLR −2.95 (−2.94 LO +2.94 HI BND for +0.00 LO +3.00 HI ELO)
+        //  PERF −0.77 ± 1.74 ELO = −2.51 LO +0.96 HI ELO
+        //  CONF 8+0.08 SEC 1 THREAD 16 MB CACHE
+        // GAMES 39056 = 9744W 19481D 9831L = 24.9%W 49.9%D 25.2%L
+        // PENTA 85⁺² 4586⁺¹ 10086⁰ 4699⁻¹ 72⁻²
+        save_rate: 10000,
     }
 }
 
@@ -305,19 +313,19 @@ fn hard_swish(x: ModelNode) -> ModelNode {
     x * gate
 }
 
-fn broadcast_rows<'a>(builder: &'a ModelBuilder, scalar: ModelNode<'a>, rows: usize) -> ModelNode<'a> {
+fn _broadcast_rows<'a>(builder: &'a ModelBuilder, scalar: ModelNode<'a>, rows: usize) -> ModelNode<'a> {
     let ones = builder.new_constant(Shape::new(rows, 1), &vec![1.0; rows]);
     ones.matmul(scalar)
 }
 
-fn rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
+fn _rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
     const EPS: f32 = 1e-5;
     let n = x.shape().rows();
     assert_eq!(x.shape().cols(), 1, "rms_norm expects a column vector");
 
     // mean of squares over the feature dimension (rows), broadcast back to (n, 1)
     let mean_sq = (x * x).reduce_sum_rows() / n as f32;
-    let inv_rms = broadcast_rows(builder, (mean_sq + EPS).abs_pow(-0.5), n);
+    let inv_rms = _broadcast_rows(builder, (mean_sq + EPS).abs_pow(-0.5), n);
     let normed = x * inv_rms;
 
     // γ as a 0-initialised weight offset by 1, so it starts at unity but trains
@@ -325,16 +333,16 @@ fn rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelN
     normed * gamma
 }
 
-fn layer_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
+fn _layer_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
     const EPS: f32 = 1e-5;
     let n = x.shape().rows();
     assert_eq!(x.shape().cols(), 1, "layer_norm expects a column vector");
 
-    let mean = broadcast_rows(builder, x.reduce_sum_rows() / n as f32, n);
+    let mean = _broadcast_rows(builder, x.reduce_sum_rows() / n as f32, n);
     let centred = x - mean;
 
     let var = (centred * centred).reduce_sum_rows() / n as f32;
-    let inv_std = broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
+    let inv_std = _broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
     let normed = centred * inv_std;
 
     let gamma = 1.0 + builder.new_weights(format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);

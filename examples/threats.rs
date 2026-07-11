@@ -35,7 +35,7 @@ fn target_is(target: usize, piece: usize) -> bool {
     target % 6 == piece - 2
 }
 
-fn map_pawn_threat(src: usize, dest: usize, target: usize, enemy: bool) -> Option<usize> {
+fn map_pawn_threat(src: usize, dest: usize, target: usize, _enemy: bool) -> Option<usize> {
     const MAP: [usize; 12] = offset_mapping([/* Piece::PAWN, */ Piece::KNIGHT, Piece::ROOK]);
 
     if MAP[target] == usize::MAX
