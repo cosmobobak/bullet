@@ -21,12 +21,14 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "bicameral";
+const NET_ID: &str = "circumflex";
 
 const L1: usize = 1024;
 const D: usize = 64;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
+
+const BYPASS: usize = 32;
 
 // weight of the auxiliary WDL-classification cross-entropy loss
 // const WDL_CE_ALPHA: f32 = 0.02;
@@ -62,7 +64,7 @@ fn main() {
     let dataset_path = "data/all.vf";
 
     let saves = [
-        "l0w", "l0b", "l1w", "l1b", // "l1n_g", "l1n_b",
+        "l0w", "bypassw", "l0b", "bypassb", "l1w", "l1b", // "l1n_g", "l1n_b",
         "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
         // "l2down_xw",
         // "l2down_fw",
@@ -84,14 +86,17 @@ fn main() {
             let l0 = builder.new_affine("l0", inputs.num_inputs(), L1);
             l0.init_with_effective_input_size(20000);
 
+            let bypass = builder.new_affine("bypass", inputs.num_inputs(), BYPASS);
+            bypass.init_with_effective_input_size(20000);
+
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * (D / 2));
             let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
             let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
             // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
             // let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
-            let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
-            let l3f = builder.new_affine("l3f", D, HEADS);
+            let l3x = builder.new_affine("l3x", D + 2 * BYPASS, NUM_OUTPUT_BUCKETS * HEADS);
+            let l3f = builder.new_affine("l3f", D + 2 * BYPASS, HEADS);
             // auxiliary WDL-classification head, training-only (not saved)
             // let l3wdl_x = builder.new_affine("l3wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
             // let l3wdl_f = builder.new_affine("l3wdl_f", D, 3);
@@ -101,6 +106,9 @@ fn main() {
             let stm_subnet = ft(stm, 0, L1 / 2) * ft(stm, L1 / 2, L1);
             let ntm_subnet = ft(ntm, 0, L1 / 2) * ft(ntm, L1 / 2, L1);
             let l0_out = stm_subnet.concat(ntm_subnet);
+
+            let bypass_stm = hard_swish(bypass.forward(stm)); // TODO: try SwiGLU
+            let bypass_ntm = hard_swish(bypass.forward(ntm)); // TODO: try SwiGLU
 
             // L₁-norm penalty on accumulator (mean, since values are non-negative):
             let mean_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
@@ -129,8 +137,10 @@ fn main() {
             // skip connexion from l1-out to l2-out:
             let l2_out = l2_out + l1_out;
 
-            let l3x_out = l3x.forward(l2_out).select(buckets);
-            let l3f_out = l3f.forward(l2_out);
+            let l3_in = l2_out.concat(bypass_stm).concat(bypass_ntm);
+
+            let l3x_out = l3x.forward(l3_in).select(buckets);
+            let l3f_out = l3f.forward(l3_in);
 
             let l3_out = l3x_out + l3f_out;
 
@@ -196,6 +206,7 @@ fn main() {
     let l1w_optimiser_params = RangerParams { min_weight: -l1w_clip, max_weight: l1w_clip, ..default_optimiser_params };
     trainer.optimiser.set_params(default_optimiser_params);
     trainer.optimiser.set_params_for_weight("l0w", l0w_optimiser_params);
+    trainer.optimiser.set_params_for_weight("bypassw", l0w_optimiser_params);
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
     let no_clipping = RangerParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
