@@ -12,6 +12,8 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
+use bullet_compiler::tensor::TValue;
+
 use crate::pawn_pawn_inputs::PawnPawnInputs;
 
 mod attacks;
@@ -58,21 +60,53 @@ const SUPERBATCHES_STAGE1: usize = 800;
 const SUPERBATCHES_STAGE2: usize = 200;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("resave") {
+        let (Some(input), Some(output)) = (args.get(2), args.get(3)) else {
+            eprintln!("usage: viridithas resave <checkpoint-dir-or-raw.bin> <output-dir>");
+            std::process::exit(1);
+        };
+        resave_fused(input, output);
+        return;
+    }
+
     let inputs = PawnPawnInputs::new(BUCKET_LAYOUT, pawn_pawn_inputs::three_file_band_mask());
 
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
 
-    let saves = [
-        "l0w", "bypassw", "l0b", "bypassb", "l1w", "l1b", // "l1n_g", "l1n_b",
-        "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
-        // "l2down_xw",
-        // "l2down_fw",
-        // "l2down_xb",
-        // "l2down_fb",
-        "l3xw", "l3fw", "l3xb", "l3fb",
-    ]
-    .map(SavedFormat::id);
+    // the FT is saved fused: for each input feature, its L1 main-accumulator
+    // weights followed by its BYPASS bypass weights, so the engine reads a
+    // single (features × (L1 + BYPASS)) matrix. likewise the biases.
+    let fused_ftw = SavedFormat::empty().transform(|store, _| {
+        let TValue::F32(l0w) = &store.get("l0w").values else { panic!() };
+        let TValue::F32(bypassw) = &store.get("bypassw").values else { panic!() };
+        let mut fused = Vec::with_capacity(l0w.len() + bypassw.len());
+        for f in 0..l0w.len() / L1 {
+            fused.extend_from_slice(&l0w[L1 * f..L1 * (f + 1)]);
+            fused.extend_from_slice(&bypassw[BYPASS * f..BYPASS * (f + 1)]);
+        }
+        fused
+    });
+    let fused_ftb = SavedFormat::empty().transform(|store, _| {
+        let TValue::F32(l0b) = &store.get("l0b").values else { panic!() };
+        let TValue::F32(bypassb) = &store.get("bypassb").values else { panic!() };
+        [l0b.as_slice(), bypassb.as_slice()].concat()
+    });
+
+    let mut saves = vec![fused_ftw, fused_ftb];
+    saves.extend(
+        [
+            "l1w", "l1b", // "l1n_g", "l1n_b",
+            "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
+            // "l2down_xw",
+            // "l2down_fw",
+            // "l2down_xb",
+            // "l2down_fb",
+            "l3xw", "l3fw", "l3xb", "l3fb",
+        ]
+        .map(SavedFormat::id),
+    );
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -305,6 +339,73 @@ fn stage_schedule<LR: lr::LrScheduler, WDL: wdl::WdlScheduler>(
         // PENTA 85⁺² 4586⁺¹ 10086⁰ 4699⁻¹ 72⁻²
         save_rate: 10000,
     }
+}
+
+/// loads a checkpoint saved with the old unfused save format (sections in
+/// the order l0w, bypassw, l0b, bypassb, layerstack) and rewrites it with
+/// the fused-FT layout.
+fn resave_fused(input: &str, output: &str) {
+    use std::path::Path;
+
+    let inputs = PawnPawnInputs::new(BUCKET_LAYOUT, pawn_pawn_inputs::three_file_band_mask());
+    let n_features = inputs.num_inputs();
+
+    let in_path = Path::new(input);
+    let raw_path = if in_path.is_dir() { in_path.join("raw.bin") } else { in_path.to_path_buf() };
+    let bytes = std::fs::read(&raw_path).expect("failed to read raw.bin");
+    assert_eq!(bytes.len() % 4, 0, "raw.bin is not a whole number of f32s");
+    let floats: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
+
+    let layerstack: usize = [
+        L1 * NUM_OUTPUT_BUCKETS * D,                   // l1w
+        NUM_OUTPUT_BUCKETS * D,                        // l1b
+        D * NUM_OUTPUT_BUCKETS * D * PROJ * 2,         // l2up_xw
+        D * D * PROJ * 2,                              // l2up_fw
+        NUM_OUTPUT_BUCKETS * D * PROJ * 2,             // l2up_xb
+        D * PROJ * 2,                                  // l2up_fb
+        (D + 2 * BYPASS) * NUM_OUTPUT_BUCKETS * HEADS, // l3xw
+        (D + 2 * BYPASS) * HEADS,                      // l3fw
+        NUM_OUTPUT_BUCKETS * HEADS,                    // l3xb
+        HEADS,                                         // l3fb
+    ]
+    .iter()
+    .sum();
+    let expected = n_features * (L1 + BYPASS) + L1 + BYPASS + layerstack;
+    assert_eq!(floats.len(), expected, "checkpoint does not match this arch's unfused layout");
+
+    let (l0w, rest) = floats.split_at(n_features * L1);
+    let (bypassw, rest) = rest.split_at(n_features * BYPASS);
+    let (l0b, rest) = rest.split_at(L1);
+    let (bypassb, layerstack) = rest.split_at(BYPASS);
+
+    let mut fused = Vec::with_capacity(floats.len());
+    for f in 0..n_features {
+        fused.extend_from_slice(&l0w[L1 * f..L1 * (f + 1)]);
+        fused.extend_from_slice(&bypassw[BYPASS * f..BYPASS * (f + 1)]);
+    }
+    fused.extend_from_slice(l0b);
+    fused.extend_from_slice(bypassb);
+    fused.extend_from_slice(layerstack);
+
+    let mut buf = Vec::with_capacity(fused.len() * 4);
+    for v in &fused {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    std::fs::create_dir_all(output).expect("failed to create output directory");
+    std::fs::write(Path::new(output).join("raw.bin"), &buf).unwrap();
+
+    // pad to 64 bytes, as bullet does when writing quantised.bin
+    let overhang = buf.len() % 64;
+    if overhang > 0 {
+        let chs = *b"bullet";
+        for i in 0..64 - overhang {
+            buf.push(chs[i % chs.len()]);
+        }
+    }
+    std::fs::write(Path::new(output).join("quantised.bin"), &buf).unwrap();
+
+    println!("rewrote {} f32s: fused FT is {n_features} features x {}", fused.len(), L1 + BYPASS);
 }
 
 fn maximum<'a>(x: ModelNode<'a>, y: ModelNode<'a>) -> ModelNode<'a> {
