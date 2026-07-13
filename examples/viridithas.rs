@@ -233,6 +233,18 @@ fn main() {
             }
         });
 
+    // probe the network's raw output for a FEN, for cross-checking
+    // engine-side inference: `viridithas eval <checkpoint-dir> <fen>`
+    if args.get(1).map(String::as_str) == Some("eval") {
+        let (Some(checkpoint), Some(fen)) = (args.get(2), args.get(3)) else {
+            eprintln!("usage: viridithas eval <checkpoint-dir> <fen>");
+            std::process::exit(1);
+        };
+        trainer.load_from_checkpoint(checkpoint);
+        println!("{:?}", trainer.eval_raw_output(fen));
+        return;
+    }
+
     let default_optimiser_params =
         RangerParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
     let l0w_optimiser_params = RangerParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
