@@ -24,7 +24,7 @@ mod threats;
 const NET_ID: &str = "circumflex";
 
 const L1: usize = 1024;
-const D: usize = 64;
+const D: usize = 32;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
 
@@ -90,7 +90,7 @@ fn main() {
             bypass.init_with_effective_input_size(20000);
 
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * (D / 2));
+            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
             let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
             let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
             // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
@@ -115,7 +115,7 @@ fn main() {
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
             let l1_out = l1.forward(l0_out).select(buckets);
-            let l1_out = hard_swish(l1_out).concat(l1_out * l1_out);
+            let l1_out = hard_swish(l1_out);
 
             // let l1n_out = rms_norm(builder, "l1n", l1_out);
             let l1n_out = l1_out; // todo: test norm.
