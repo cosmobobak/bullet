@@ -21,11 +21,11 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sandhi";
+const NET_ID: &str = "magnetar";
 
 const L1: usize = 1024;
 const D: usize = 32;
-const PROJ: usize = 1;
+const HIDDEN: usize = D;
 const HEADS: usize = 1;
 
 // weight of the auxiliary WDL-classification cross-entropy loss
@@ -61,14 +61,16 @@ fn main() {
     // hyperparams to fiddle with
     let dataset_path = "data/all.vf";
 
+    #[rustfmt::skip]
     let saves = [
-        "l0w", "l0b", "l1w", "l1b", // "l1n_g", "l1n_b",
+        "l0w", "l0b", "l1w", "l1b",
+        "l1n_g",
         "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
-        // "l2down_xw",
-        // "l2down_fw",
-        // "l2down_xb",
-        // "l2down_fb",
-        "l3xw", "l3fw", "l3xb", "l3fb",
+        "l2down_xw", "l2down_fw", "l2down_xb", "l2down_fb",
+        "l2n_g",
+        "l3up_xw", "l3up_fw", "l3up_xb", "l3up_fb",
+        "l3down_xw", "l3down_fw", "l3down_xb", "l3down_fb",
+        "l4xw", "l4fw", "l4xb", "l4fb",
     ]
     .map(SavedFormat::id);
 
@@ -86,12 +88,19 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
-            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
-            let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
-            // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
-            // let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
-            let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
-            let l3f = builder.new_affine("l3f", D, HEADS);
+            // block A
+            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
+            let l2up_f = builder.new_affine("l2up_f", D, HIDDEN * 2);
+            let l2down_x = builder.new_affine("l2down_x", HIDDEN, NUM_OUTPUT_BUCKETS * D);
+            let l2down_f = builder.new_affine("l2down_f", HIDDEN, D);
+            // block B
+            let l3up_x = builder.new_affine("l3up_x", D, NUM_OUTPUT_BUCKETS * HIDDEN * 2);
+            let l3up_f = builder.new_affine("l3up_f", D, HIDDEN * 2);
+            let l3down_x = builder.new_affine("l3down_x", HIDDEN, NUM_OUTPUT_BUCKETS * D);
+            let l3down_f = builder.new_affine("l3down_f", HIDDEN, D);
+            // head
+            let l4x = builder.new_affine("l4x", D, NUM_OUTPUT_BUCKETS * HEADS);
+            let l4f = builder.new_affine("l4f", D, HEADS);
             // auxiliary WDL-classification head, training-only (not saved)
             // let l3wdl_x = builder.new_affine("l3wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
             // let l3wdl_f = builder.new_affine("l3wdl_f", D, 3);
@@ -106,33 +115,27 @@ fn main() {
             let mean_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
             let l0_out_norm = mean_l1_vec.matmul(l0_out);
 
+            // note: deliberately not activating l1_out.
             let l1_out = l1.forward(l0_out).select(buckets);
-            let l1_out = hard_swish(l1_out);
 
-            // let l1n_out = rms_norm(builder, "l1n", l1_out);
-            let l1n_out = l1_out; // todo: test norm.
+            // BLOCK A (pre-norm FFN_SwiGLU(x))
+            let h = rms_norm(builder, "l1n", l1_out);
+            let p = l2up_x.forward(h).select(buckets) + l2up_f.forward(h);
+            let gate = hard_swish(p.slice_rows(0, HIDDEN));
+            let id = p.slice_rows(HIDDEN, HIDDEN * 2);
+            let g = gate * id;
+            let l2_out = l2down_x.forward(g).select(buckets) + l2down_f.forward(g) + l1_out;
 
-            // up-projection:
-            let l2x_proj = l2up_x.forward(l1n_out).select(buckets);
-            let l2f_proj = l2up_f.forward(l1n_out);
-            let l2_proj = l2x_proj + l2f_proj;
-            // activation:
-            let l2_proj_gate = hard_swish(l2_proj.slice_rows(0, D * PROJ));
-            let l2_proj_id = l2_proj.slice_rows(D * PROJ, D * PROJ * 2);
-            let l2_proj = l2_proj_gate * l2_proj_id;
-            // down-projection:
-            // let l2x_out = l2down_x.forward(l2_proj).select(buckets);
-            // let l2f_out = l2down_f.forward(l2_proj);
-            // let l2_out = l2x_out + l2f_out;
-            let l2_out = l2_proj;
+            // BLOCK B
+            let h = rms_norm(builder, "l2n", l2_out);
+            let p = l3up_x.forward(h).select(buckets) + l3up_f.forward(h);
+            let gate = hard_swish(p.slice_rows(0, HIDDEN));
+            let id = p.slice_rows(HIDDEN, HIDDEN * 2);
+            let g = gate * id;
+            let l3_out = l3down_x.forward(g).select(buckets) + l3down_f.forward(g) + l2_out;
 
-            // skip connexion from l1-out to l2-out:
-            let l2_out = l2_out + l1_out;
-
-            let l3x_out = l3x.forward(l2_out).select(buckets);
-            let l3f_out = l3f.forward(l2_out);
-
-            let l3_out = l3x_out + l3f_out;
+            // read output from stream
+            let out = l4x.forward(l3_out).select(buckets) + l4f.forward(l3_out);
 
             if HEADS == 3 {
                 // -------- MSE --------
@@ -140,9 +143,9 @@ fn main() {
                 let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
                 let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
 
-                let loss = loss_mask.matmul(l3_out);
-                let draw = draw_mask.matmul(l3_out);
-                let win = win_mask.matmul(l3_out);
+                let loss = loss_mask.matmul(out);
+                let draw = draw_mask.matmul(out);
+                let win = win_mask.matmul(out);
 
                 let max = maximum(loss, maximum(draw, win));
 
@@ -164,28 +167,28 @@ fn main() {
 
                 // -------- CE --------
                 let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-                let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
+                let ce_loss = ones.matmul(out.softmax_crossentropy_loss(targets));
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
                 let loss = loss + 0.005 * l0_out_norm;
 
-                (l3_out, loss)
+                (out, loss)
             } else {
                 // targets: row 0 is the WDL-blended value, rows 1..4 one-hot game result
                 let target_value = targets.slice_rows(0, 1);
                 // let target_wdl = targets.slice_rows(1, 4);
 
-                let value_loss = l3_out.sigmoid().squared_error(target_value);
+                let value_loss = out.sigmoid().squared_error(target_value);
 
-                // let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
+                // let wdl_logits = l3wdl_x.forward(l3_out).select(buckets) + l3wdl_f.forward(l3_out);
                 // let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
                 // let wdl_loss = ones.matmul(wdl_logits.softmax_crossentropy_loss(target_wdl));
                 // let wdl_logit_norm = ones.matmul(wdl_logits * wdl_logits);
 
                 let loss = value_loss + 0.005 * l0_out_norm; // + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm;
 
-                (l3_out, loss)
+                (out, loss)
             }
         });
 
@@ -199,17 +202,17 @@ fn main() {
     trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
     // don't bother clipping the float layers
     let no_clipping = RangerParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
-    for name in [
-        // "l1n_g",
-        // "l1n_b",
+    #[rustfmt::skip]
+    let noclip_names = [
+        "l1n_g", "l2n_g",
         "l2up_xw", "l2up_xb", "l2up_fw", "l2up_fb",
-        // "l2down_xw",
-        // "l2down_xb",
-        // "l2down_fw",
-        // "l2down_fb",
-        "l3xw", "l3xb", "l3fw", "l3fb",
+        "l2down_xw", "l2down_xb", "l2down_fw", "l2down_fb",
+        "l3up_xw", "l3up_xb", "l3up_fw", "l3up_fb",
+        "l3down_xw", "l3down_xb", "l3down_fw", "l3down_fb",
+        "l4xw", "l4xb", "l4fw", "l4fb",
         // "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
-    ] {
+    ];
+    for name in noclip_names {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
     }
 
@@ -313,19 +316,19 @@ fn hard_swish(x: ModelNode) -> ModelNode {
     x * gate
 }
 
-fn _broadcast_rows<'a>(builder: &'a ModelBuilder, scalar: ModelNode<'a>, rows: usize) -> ModelNode<'a> {
+fn broadcast_rows<'a>(builder: &'a ModelBuilder, scalar: ModelNode<'a>, rows: usize) -> ModelNode<'a> {
     let ones = builder.new_constant(Shape::new(rows, 1), &vec![1.0; rows]);
     ones.matmul(scalar)
 }
 
-fn _rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
+fn rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
     const EPS: f32 = 1e-5;
     let n = x.shape().rows();
     assert_eq!(x.shape().cols(), 1, "rms_norm expects a column vector");
 
     // mean of squares over the feature dimension (rows), broadcast back to (n, 1)
     let mean_sq = (x * x).reduce_sum_rows() / n as f32;
-    let inv_rms = _broadcast_rows(builder, (mean_sq + EPS).abs_pow(-0.5), n);
+    let inv_rms = broadcast_rows(builder, (mean_sq + EPS).abs_pow(-0.5), n);
     let normed = x * inv_rms;
 
     // γ as a 0-initialised weight offset by 1, so it starts at unity but trains
@@ -338,11 +341,11 @@ fn _layer_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> Mod
     let n = x.shape().rows();
     assert_eq!(x.shape().cols(), 1, "layer_norm expects a column vector");
 
-    let mean = _broadcast_rows(builder, x.reduce_sum_rows() / n as f32, n);
+    let mean = broadcast_rows(builder, x.reduce_sum_rows() / n as f32, n);
     let centred = x - mean;
 
     let var = (centred * centred).reduce_sum_rows() / n as f32;
-    let inv_std = _broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
+    let inv_std = broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
     let normed = centred * inv_std;
 
     let gamma = 1.0 + builder.new_weights(format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
