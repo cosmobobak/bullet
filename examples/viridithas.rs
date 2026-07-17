@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "juice";
+const NET_ID: &str = "excitement";
 
 const L1: usize = 256;
 const D: usize = 32;
@@ -56,6 +56,9 @@ const SUPERBATCHES_STAGE1: usize = 800;
 const SUPERBATCHES_STAGE2: usize = 200;
 
 const DATASET_PATH: &str = "data/all.vf";
+
+const TEST_SET_PATH: &str = "data/test.vf";
+const VAL_BATCHES: usize = 128;
 
 fn main() {
     let trainer = || {
@@ -231,7 +234,21 @@ fn main() {
         )
     };
 
-    let exec = |mut trainer: ValueTrainer<_, _, _>, settings, dataloader, net_id: String, juice: f64| {
+    let val_dataloader = || {
+        bullet_lib::value::loader::ViriBinpackLoader::new(
+            TEST_SET_PATH,
+            4096,
+            16,
+            viriformat::dataformat::Filter {
+                max_eval: 20_000,
+                // no skipping: every run measures against the same positions
+                random_fen_skipping: false,
+                ..Default::default()
+            },
+        )
+    };
+
+    let exec = |mut trainer: ValueTrainer<_, _, _>, settings, dataloader, net_id: String, juice: f64, lambda: f32| {
         let sb_s0 = (SUPERBATCHES_STAGE0 as f64 * juice) as usize;
         let sb_s1 = (SUPERBATCHES_STAGE1 as f64 * juice) as usize;
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
@@ -243,8 +260,16 @@ fn main() {
                 sb_s0,
                 wdl::ConstantWDL { value: 0.2 },
                 lr::Sequence {
-                    first: lr::LinearDecayLR { initial_lr: 1e-4, final_lr: 5e-3, final_superbatch: warmup_sbs },
-                    second: lr::LinearDecayLR { initial_lr: 5e-3, final_lr: 1e-4, final_superbatch: cooldown_sbs },
+                    first: lr::LinearDecayLR {
+                        initial_lr: 1e-4 * lambda,
+                        final_lr: 5e-3 * lambda,
+                        final_superbatch: warmup_sbs,
+                    },
+                    second: lr::LinearDecayLR {
+                        initial_lr: 5e-3 * lambda,
+                        final_lr: 1e-4 * lambda,
+                        final_superbatch: cooldown_sbs,
+                    },
                     first_scheduler_final_superbatch: warmup_sbs,
                 },
             ),
@@ -257,7 +282,7 @@ fn main() {
                 format!("{}-s1", net_id),
                 sb_s1,
                 wdl::LinearWDL { start: 0.2, end: 0.5 },
-                lr::LinearDecayLR { initial_lr: 1e-3, final_lr: 1e-6, final_superbatch: sb_s1 },
+                lr::LinearDecayLR { initial_lr: 1e-3 * lambda, final_lr: 1e-6 * lambda, final_superbatch: sb_s1 },
             ),
             &settings,
             &dataloader,
@@ -268,16 +293,52 @@ fn main() {
                 format!("{}-s2", net_id),
                 sb_s2,
                 wdl::ConstantWDL { value: 1.0 },
-                lr::LinearDecayLR { initial_lr: 1e-5, final_lr: 1e-7, final_superbatch: sb_s2 },
+                lr::LinearDecayLR { initial_lr: 1e-5 * lambda, final_lr: 1e-7 * lambda, final_superbatch: sb_s2 },
             ),
             &settings,
             &dataloader,
         );
+
+        trainer.run(
+            &TrainingSchedule {
+                net_id: format!("{}-val", net_id),
+                eval_scale: 400.0,
+                steps: TrainingSteps {
+                    batch_size: 16_384 * BATCH_GLOM,
+                    batches_per_superbatch: VAL_BATCHES,
+                    start_superbatch: 1,
+                    end_superbatch: 1,
+                },
+                wdl_scheduler: wdl::ConstantWDL { value: 1.0 },
+                lr_scheduler: lr::ConstantLR { value: 0.0 },
+                save_rate: 10000,
+            },
+            &settings,
+            &val_dataloader(),
+        );
     };
 
-    for juice in [1. / 20., 1. / 10., 1. / 5., 1. / 2., 1., 2.] {
-        let name = format!("{NET_ID}-{juice}");
-        exec(trainer(), settings(), dataloader(), name, juice);
+    // sweep grid:
+    #[rustfmt::skip]
+    let sweep: &[(&str, f64, f32)] = &[
+        // training-time sweep at λ = 1:
+        // ("0.05", 0.05, 1.0),
+        // ("0.1",  0.1,  1.0),
+        // ("0.2",  0.2,  1.0),
+        // ("0.5",  0.5,  1.0),
+        // ("1",    1.0,  1.0),
+        // ("2",    2.0,  1.0),
+        // LR sweep at juice = 0.2:
+        ("0.2-lr0.125", 0.2, 0.125),
+        ("0.2-lr0.25",  0.2, 0.25),
+        ("0.2-lr0.5",   0.2, 0.5),
+        ("0.2-lr1",     0.2, 1.0),
+        ("0.2-lr2",     0.2, 2.0),
+        ("0.2-lr4",     0.2, 4.0),
+    ];
+
+    for &(suffix, juice, lambda) in sweep {
+        exec(trainer(), settings(), dataloader(), format!("{NET_ID}-{suffix}"), juice, lambda);
     }
 }
 
