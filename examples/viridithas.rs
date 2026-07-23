@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "blind";
+const NET_ID: &str = "blind2";
 
 const L1: usize = 256;
 const D: usize = 32;
@@ -192,7 +192,7 @@ fn main() {
             });
 
         let default_optimiser_params = ScheduleFreeAdamWParams {
-            beta1: 0.99,
+            beta1: 0.9,
             beta2: 0.999,
             min_weight: -1.98,
             max_weight: 1.98,
@@ -263,29 +263,29 @@ fn main() {
                 format!("{}-s0", net_id),
                 sb_s0,
                 wdl::ConstantWDL { value: 0.2 },
-                lr::ConstantLR { value: 5e-3 * lambda },
+                lr::Warmup { inner: lr::ConstantLR { value: 5e-3 * lambda }, warmup_batches: 800 },
             ),
             &settings,
             &dataloader,
         );
-
+        trainer.optimiser.reset_state().unwrap();
         trainer.run(
             &stage_schedule(
                 format!("{}-s1", net_id),
                 sb_s1,
                 wdl::LinearWDL { start: 0.2, end: 0.5 },
-                lr::ConstantLR { value: 1e-3 * lambda },
+                lr::Warmup { inner: lr::ConstantLR { value: 1e-3 * lambda }, warmup_batches: 800 },
             ),
             &settings,
             &dataloader,
         );
-
+        trainer.optimiser.reset_state().unwrap();
         trainer.run(
             &stage_schedule(
                 format!("{}-s2", net_id),
                 sb_s2,
                 wdl::ConstantWDL { value: 1.0 },
-                lr::ConstantLR { value: 1e-5 * lambda },
+                lr::Warmup { inner: lr::ConstantLR { value: 1e-5 * lambda }, warmup_batches: 800 },
             ),
             &settings,
             &dataloader,
