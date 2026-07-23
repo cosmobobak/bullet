@@ -290,7 +290,7 @@ fn main() {
             &settings,
             &dataloader,
         );
-
+        trainer.optimiser.eval_mode().unwrap();
         trainer.run(
             &TrainingSchedule {
                 net_id: format!("{}-val", net_id),
