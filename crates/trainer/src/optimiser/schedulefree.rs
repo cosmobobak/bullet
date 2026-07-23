@@ -24,13 +24,22 @@ pub struct ScheduleFreeAdamWParams {
     pub decay: f32,
     pub beta1: f32,
     pub beta2: f32,
+    pub warmup_steps: usize,
     pub min_weight: f32,
     pub max_weight: f32,
 }
 
 impl Default for ScheduleFreeAdamWParams {
     fn default() -> Self {
-        Self { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -1.98, max_weight: 1.98 }
+        Self {
+            decay: 0.01,
+            beta1: 0.9,
+            beta2: 0.999,
+            // long warmup, feels good to cosmo
+            warmup_steps: 2000,
+            min_weight: -1.98,
+            max_weight: 1.98,
+        }
     }
 }
 
@@ -62,6 +71,7 @@ const DECL_CUDA: &str = "
 extern \"C\" __global__ void sfadamw(
     const float* adj_ptr,
     const float* rate_ptr,
+    const float* step_size_ptr,
     const float* c_ptr,
     const int* first_ptr,
     const float* gradients,
@@ -95,7 +105,7 @@ impl ScheduleFreeAdamWParams {
                 if (tid < {})
                 {{
                     const float adj = adj_ptr[0];
-                    const float rate = rate_ptr[0];
+                    const float rate = rate_ptr[0] * step_size_ptr[0];
                     const float c = c_ptr[0];
                     const int first = first_ptr[0];
                     float4 p = ((float4 *)network)[tid];
@@ -122,7 +132,7 @@ impl ScheduleFreeAdamWParams {
                 if (tid < {size})
                 {{
                     const float adj = adj_ptr[0];
-                    const float rate = rate_ptr[0];
+                    const float rate = rate_ptr[0] * step_size_ptr[0];
                     const float c = c_ptr[0];
                     const int first = first_ptr[0];
                     float p = network[tid];
@@ -148,11 +158,21 @@ impl ScheduleFreeAdamWParams {
         let total_threads = if size.is_multiple_of(4) { size / 4 } else { size };
         let src = unsafe {
             KernelSrc::new(
-                vec![sty, sty, sty, TType::new(1, DType::I32), ty],
+                vec![sty, sty, sty, sty, TType::new(1, DType::I32), ty],
                 vec![ty; 3],
                 "sfadamw".to_string(),
                 format!("{op}{decl}{{{body}}}"),
-                vec![(0, true), (1, true), (2, true), (3, true), (4, true), (0, false), (1, false), (2, false)],
+                vec![
+                    (0, true),
+                    (1, true),
+                    (2, true),
+                    (3, true),
+                    (4, true),
+                    (5, true),
+                    (0, false),
+                    (1, false),
+                    (2, false),
+                ],
                 BTreeSet::new(),
                 Dim3 { x: total_threads.div_ceil(256) as u32, y: 1, z: 1 },
                 256,
@@ -224,11 +244,15 @@ pub struct ScheduleFreeAdamW<G: Gpu> {
     convert_op: CompiledKernel<G>,
     params: ScheduleFreeAdamWParams,
     step: usize,
+    /// Σ_{i=1}^{t} s_i²
+    weight_sum: f64,
     /// whether the network buffer currently holds `x` rather than `y`.
     eval: bool,
+    step_size: Arc<Buffer<G>>,
     c: Arc<Buffer<G>>,
     first: Arc<Buffer<G>>,
     conv_w: Arc<Buffer<G>>,
+    cpu_step_size: TValue,
     cpu_c: TValue,
     cpu_first: TValue,
     cpu_conv_w: TValue,
@@ -292,10 +316,13 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
             convert_op,
             params: default_params,
             step: 0,
+            weight_sum: 0.0,
             eval: false,
+            step_size: Buffer::from_host(device, &TValue::zeros(DType::F32, 1))?,
             c: Buffer::from_host(device, &TValue::zeros(DType::F32, 1))?,
             first: Buffer::from_host(device, &TValue::zeros(DType::I32, 1))?,
             conv_w: Buffer::from_host(device, &TValue::zeros(DType::F32, 1))?,
+            cpu_step_size: TValue::F32(vec![0.0]),
             cpu_c: TValue::F32(vec![0.0]),
             cpu_first: TValue::I32(vec![0]),
             cpu_conv_w: TValue::F32(vec![0.0]),
@@ -310,24 +337,39 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
         gradient_factor: Arc<Buffer<G>>,
         learning_rate: Arc<Buffer<G>>,
     ) -> OptimiserUpdateResult<'a, G> {
-        // so we can get c = 1/(t+1).
         let step = self.step;
-        let c = 1.0 / (step as f32 + 1.0);
         let first = i32::from(step == 0);
 
+        // t is 1-indexed.
+        let t = step + 1;
+        let bias_correction = (1.0 - self.params.beta2.powf(t as f32)).sqrt();
+        let warmup = if self.params.warmup_steps > 0 {
+            (t as f32 / self.params.warmup_steps as f32).min(1.0)
+        } else {
+            1.0
+        };
+        let s = bias_correction * warmup;
+
+        // c_t = s_t^2 / Σ_{i=1}^{t} s_i^2.
+        let weight = f64::from(s) * f64::from(s);
+        self.weight_sum += weight;
+        let c = if self.weight_sum > 0.0 { (weight / self.weight_sum) as f32 } else { 1.0 };
+
+        self.cpu_step_size.write(0, DValue::F32(s));
         self.cpu_c.write(0, DValue::F32(c));
         self.cpu_first.write(0, DValue::I32(first));
 
-        self.step = step + 1;
+        self.step = t;
 
         let mut sync = OptimiserUpdateSync::default();
 
+        sync.push_copy(self.step_size.copy_from_host_async(stream, &self.cpu_step_size)?);
         sync.push_copy(self.c.copy_from_host_async(stream, &self.cpu_c)?);
         sync.push_copy(self.first.copy_from_host_async(stream, &self.cpu_first)?);
 
         sync.push_kernel(self.op.execute(
             stream.clone(),
-            vec![gradient_factor, learning_rate, self.c.clone(), self.first.clone(), grads],
+            vec![gradient_factor, learning_rate, self.step_size.clone(), self.c.clone(), self.first.clone(), grads],
             vec![weights, self.fast.clone(), self.velocity.clone()],
         )?);
 
@@ -355,6 +397,7 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
         self.fast.copy_from_host(&TValue::zeros(DType::F32, size))?;
         self.velocity.copy_from_host(&TValue::zeros(DType::F32, size))?;
         self.step = 0;
+        self.weight_sum = 0.0;
         self.eval = false;
         Ok(())
     }
@@ -367,7 +410,7 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
 
         let mut file = File::create(format!("{path}/step.txt")).unwrap();
         for (id, single) in map.iter() {
-            writeln!(file, "{id},{}", single.step).unwrap();
+            writeln!(file, "{id},{},{}", single.step, single.weight_sum).unwrap();
         }
 
         Ok(())
@@ -384,15 +427,17 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
                 let s = s.unwrap();
                 let mut split = s.split(',');
                 let id = split.next().unwrap();
-                (id.to_string(), split.next().unwrap().parse().unwrap())
+                let step = split.next().unwrap().parse().unwrap();
+                let weight_sum = split.next().unwrap().parse().unwrap();
+                (id.to_string(), (step, weight_sum))
             })
-            .collect::<Vec<(String, usize)>>();
+            .collect::<Vec<(String, (usize, f64))>>();
 
         fast.sort_by_key(|(id, _)| id.clone());
         velocity.sort_by_key(|(id, _)| id.clone());
         steps.sort_by_key(|(id, _)| id.clone());
 
-        for (((id1, z), (id2, vel)), (id3, step)) in fast.into_iter().zip(velocity).zip(steps) {
+        for (((id1, z), (id2, vel)), (id3, (step, weight_sum))) in fast.into_iter().zip(velocity).zip(steps) {
             assert_eq!(id1, id2);
             assert_eq!(id1, id3);
 
@@ -400,6 +445,7 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
             single.fast.copy_from_host(&TValue::F32(z))?;
             single.velocity.copy_from_host(&TValue::F32(vel))?;
             single.step = step;
+            single.weight_sum = weight_sum;
             single.eval = false;
         }
 
