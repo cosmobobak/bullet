@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "blind2";
+const NET_ID: &str = "blind3";
 
 const L1: usize = 256;
 const D: usize = 32;
@@ -263,7 +263,7 @@ fn main() {
                 format!("{}-s0", net_id),
                 sb_s0,
                 wdl::ConstantWDL { value: 0.2 },
-                lr::Warmup { inner: lr::ConstantLR { value: 5e-3 * lambda }, warmup_batches: 800 },
+                lr::ConstantLR { value: 5e-3 * lambda },
             ),
             &settings,
             &dataloader,
@@ -274,7 +274,7 @@ fn main() {
                 format!("{}-s1", net_id),
                 sb_s1,
                 wdl::LinearWDL { start: 0.2, end: 0.5 },
-                lr::Warmup { inner: lr::ConstantLR { value: 1e-3 * lambda }, warmup_batches: 800 },
+                lr::ConstantLR { value: 1e-3 * lambda },
             ),
             &settings,
             &dataloader,
@@ -285,7 +285,7 @@ fn main() {
                 format!("{}-s2", net_id),
                 sb_s2,
                 wdl::ConstantWDL { value: 1.0 },
-                lr::Warmup { inner: lr::ConstantLR { value: 1e-5 * lambda }, warmup_batches: 800 },
+                lr::ConstantLR { value: 1e-5 * lambda },
             ),
             &settings,
             &dataloader,
@@ -322,11 +322,11 @@ fn main() {
         // ("2",    2.0,  1.0),
         // ("4",    4.0,  1.0),
         // LR sweep at juice = 0.2:
-        ("0.2-lr0.125", 0.2, 0.125),
-        ("0.2-lr0.25",  0.2, 0.25),
         ("0.2-lr0.5",   0.2, 0.5),
         ("0.2-lr1",     0.2, 1.0),
+        ("0.2-lr0.25",  0.2, 0.25),
         ("0.2-lr2",     0.2, 2.0),
+        ("0.2-lr0.125", 0.2, 0.125),
         ("0.2-lr4",     0.2, 4.0),
     ];
 
