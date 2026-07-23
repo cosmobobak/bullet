@@ -44,6 +44,10 @@ name = "1_simple"
 path = "../../examples/progression/1_simple.rs"
 
 [[example]]
+name = "1_simple_schedulefree"
+path = "../../examples/progression/1_simple_schedulefree.rs"
+
+[[example]]
 name = "2_output_buckets"
 path = "../../examples/progression/2_output_buckets.rs"
 

@@ -23,7 +23,8 @@ pub mod optimiser {
     pub type AdamWOptimiser = optimiser::adam::AdamW<ExecutionContext>;
     pub type RAdamOptimiser = radam::RAdam<ExecutionContext>;
     pub type RangerOptimiser = optimiser::ranger::Ranger<ExecutionContext>;
-    pub use optimiser::{Optimiser, adam::AdamWParams, ranger::RangerParams};
+    pub type ScheduleFreeAdamWOptimiser = optimiser::schedulefree::ScheduleFreeAdamW<ExecutionContext>;
+    pub use optimiser::{Optimiser, adam::AdamWParams, ranger::RangerParams, schedulefree::ScheduleFreeAdamWParams};
 
     pub trait OptimiserType: Default {
         type Optimiser: OptimiserState<ExecutionContext>;
@@ -45,6 +46,12 @@ pub mod optimiser {
     pub struct Ranger;
     impl OptimiserType for Ranger {
         type Optimiser = RangerOptimiser;
+    }
+
+    #[derive(Default)]
+    pub struct ScheduleFreeAdamW;
+    impl OptimiserType for ScheduleFreeAdamW {
+        type Optimiser = ScheduleFreeAdamWOptimiser;
     }
 
     #[derive(Clone, Copy, Debug)]

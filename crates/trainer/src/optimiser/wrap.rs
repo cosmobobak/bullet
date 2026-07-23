@@ -35,6 +35,22 @@ where
         self.optimiser.update(stream, weights, grads, gradient_factor, learning_rate)
     }
 
+    fn convert_to_eval<'a>(
+        &'a mut self,
+        stream: &Arc<Stream<G>>,
+        weights: Arc<Buffer<G>>,
+    ) -> OptimiserUpdateResult<'a, G> {
+        self.optimiser.convert_to_eval(stream, weights)
+    }
+
+    fn convert_to_train<'a>(
+        &'a mut self,
+        stream: &Arc<Stream<G>>,
+        weights: Arc<Buffer<G>>,
+    ) -> OptimiserUpdateResult<'a, G> {
+        self.optimiser.convert_to_train(stream, weights)
+    }
+
     fn reset(&mut self) -> Result<(), G::Error> {
         self.optimiser.reset()
     }

@@ -86,6 +86,22 @@ impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for WeightClipping<G, S> {
         Ok(blocks)
     }
 
+    fn convert_to_eval<'a>(
+        &'a mut self,
+        stream: &Arc<Stream<G>>,
+        weights: Arc<Buffer<G>>,
+    ) -> OptimiserUpdateResult<'a, G> {
+        self.inner.convert_to_eval(stream, weights)
+    }
+
+    fn convert_to_train<'a>(
+        &'a mut self,
+        stream: &Arc<Stream<G>>,
+        weights: Arc<Buffer<G>>,
+    ) -> OptimiserUpdateResult<'a, G> {
+        self.inner.convert_to_train(stream, weights)
+    }
+
     fn reset(&mut self) -> Result<(), G::Error> {
         self.inner.reset()
     }

@@ -21,7 +21,7 @@ pub fn write_losses(path: &str, error_record: &[(usize, usize, f32)]) {
     }
 }
 
-pub fn save_to_checkpoint<O>(optimiser: &Optimiser<ExecutionContext, O>, saved_format: &[SavedFormat], path: &str)
+pub fn save_to_checkpoint<O>(optimiser: &mut Optimiser<ExecutionContext, O>, saved_format: &[SavedFormat], path: &str)
 where
     O: OptimiserState<ExecutionContext>,
 {
@@ -30,6 +30,8 @@ where
     let optimiser_path = format!("{path}/optimiser_state");
     std::fs::create_dir(optimiser_path.as_str()).unwrap_or(());
     optimiser.write_to_checkpoint(&optimiser_path).unwrap();
+
+    optimiser.eval_mode().unwrap();
 
     if let Err(e) = save_unquantised(optimiser, saved_format, &format!("{path}/raw.bin")) {
         println!("Failed to write raw network weights:");
@@ -40,6 +42,8 @@ where
         println!("Failed to write quantised network weights:");
         println!("{e}");
     }
+
+    optimiser.train_mode().unwrap();
 }
 
 pub fn save_unquantised<O>(
@@ -100,15 +104,21 @@ where
         }
     }
 
-    pub fn save_to_checkpoint(&self, path: &str) {
-        save_to_checkpoint(&self.optimiser, &self.state.saved_format, path);
+    pub fn save_to_checkpoint(&mut self, path: &str) {
+        save_to_checkpoint(&mut self.optimiser, &self.state.saved_format, path);
     }
 
-    pub fn save_quantised(&self, path: &str) -> io::Result<()> {
-        save_quantised(&self.optimiser, &self.state.saved_format, path)
+    pub fn save_quantised(&mut self, path: &str) -> io::Result<()> {
+        self.optimiser.eval_mode().unwrap();
+        let res = save_quantised(&self.optimiser, &self.state.saved_format, path);
+        self.optimiser.train_mode().unwrap();
+        res
     }
 
-    pub fn save_unquantised(&self, path: &str) -> io::Result<()> {
-        save_unquantised(&self.optimiser, &self.state.saved_format, path)
+    pub fn save_unquantised(&mut self, path: &str) -> io::Result<()> {
+        self.optimiser.eval_mode().unwrap();
+        let res = save_unquantised(&self.optimiser, &self.state.saved_format, path);
+        self.optimiser.train_mode().unwrap();
+        res
     }
 }
