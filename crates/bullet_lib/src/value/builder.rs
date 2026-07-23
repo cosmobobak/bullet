@@ -30,6 +30,7 @@ pub struct ValueTrainerBuilder<O, I: SparseInputType, P, Out> {
     wdl_output: TargetType,
     use_win_rate_model: bool,
     seed: u64,
+    device: i32,
 }
 
 impl<O, I> Default for ValueTrainerBuilder<O, I, SinglePerspective, NoOutputBuckets>
@@ -49,6 +50,7 @@ where
             wdl_output: TargetType::Value,
             use_win_rate_model: false,
             seed: 198273612,
+            device: 0,
         }
     }
 }
@@ -96,6 +98,11 @@ where
 
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
+        self
+    }
+
+    pub fn use_device(mut self, ordinal: i32) -> Self {
+        self.device = ordinal;
         self
     }
 
@@ -148,7 +155,7 @@ where
 
         let definition = ModelDefinition::new(builder.ir().clone(), Some(loss.node()), [(out.node(), "output".into())]);
         let weights = ModelWeights::new(&definition, self.seed);
-        let device = Device::<ExecutionContext>::new(0).unwrap();
+        let device = Device::<ExecutionContext>::new(self.device).unwrap();
 
         ValueTrainer {
             optimiser: Optimiser::new(definition, weights, device, Default::default()).unwrap(),
@@ -244,6 +251,7 @@ where
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
             seed: self.seed,
+            device: self.device,
         }
     }
 }
@@ -271,6 +279,7 @@ where
             wdl_output: self.wdl_output,
             use_win_rate_model: self.use_win_rate_model,
             seed: self.seed,
+            device: self.device,
         }
     }
 }

@@ -15,12 +15,13 @@ bullet-gpu = { workspace = true }
 bullet-trainer = { workspace = true }
 bulletformat = "1.8.0"
 montyformat = "0.9.2"
-sfbinpack = "0.6.0"
+sfbinpack = "0.6.4"
 viriformat = "2.0.1"
 
 [features]
 cuda = ["bullet-gpu/cuda", "bullet-trainer/cuda"]
 rocm = ["bullet-gpu/rocm", "bullet-trainer/rocm"]
+metal = ["bullet-gpu/metal", "bullet-trainer/metal"]
 
 [[example]]
 name = "simple"
@@ -41,6 +42,10 @@ path = "../../examples/tests/test3.rs"
 [[example]]
 name = "1_simple"
 path = "../../examples/progression/1_simple.rs"
+
+[[example]]
+name = "1_simple_schedulefree"
+path = "../../examples/progression/1_simple_schedulefree.rs"
 
 [[example]]
 name = "2_output_buckets"

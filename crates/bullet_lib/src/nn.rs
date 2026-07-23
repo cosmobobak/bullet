@@ -1,12 +1,18 @@
 pub use bullet_compiler::model::{Affine, InitSettings, ModelBuilder, ModelNode, Shape};
 
+#[cfg(all(feature = "metal", any(feature = "cuda", feature = "rocm")))]
+compile_error!("The 'metal' feature cannot be enabled at the same time as 'cuda' or 'rocm'. Choose one GPU backend.");
+
 #[cfg(feature = "cuda")]
 pub type ExecutionContext = bullet_gpu::runtime::cuda::Cuda;
 
 #[cfg(all(feature = "rocm", not(feature = "cuda")))]
 pub type ExecutionContext = bullet_gpu::runtime::rocm::ROCm;
 
-#[cfg(not(any(feature = "cuda", feature = "rocm")))]
+#[cfg(all(feature = "metal", not(any(feature = "cuda", feature = "rocm"))))]
+pub type ExecutionContext = bullet_gpu::runtime::metal::Metal;
+
+#[cfg(not(any(feature = "cuda", feature = "rocm", feature = "metal")))]
 pub type ExecutionContext = bullet_gpu::runtime::mock::MockGpu;
 
 pub mod optimiser {
@@ -17,7 +23,8 @@ pub mod optimiser {
     pub type AdamWOptimiser = optimiser::adam::AdamW<ExecutionContext>;
     pub type RAdamOptimiser = radam::RAdam<ExecutionContext>;
     pub type RangerOptimiser = optimiser::ranger::Ranger<ExecutionContext>;
-    pub use optimiser::{Optimiser, adam::AdamWParams, ranger::RangerParams};
+    pub type ScheduleFreeAdamWOptimiser = optimiser::schedulefree::ScheduleFreeAdamW<ExecutionContext>;
+    pub use optimiser::{Optimiser, adam::AdamWParams, ranger::RangerParams, schedulefree::ScheduleFreeAdamWParams};
 
     pub trait OptimiserType: Default {
         type Optimiser: OptimiserState<ExecutionContext>;
@@ -39,6 +46,12 @@ pub mod optimiser {
     pub struct Ranger;
     impl OptimiserType for Ranger {
         type Optimiser = RangerOptimiser;
+    }
+
+    #[derive(Default)]
+    pub struct ScheduleFreeAdamW;
+    impl OptimiserType for ScheduleFreeAdamW {
+        type Optimiser = ScheduleFreeAdamWOptimiser;
     }
 
     #[derive(Clone, Copy, Debug)]

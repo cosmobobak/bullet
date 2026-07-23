@@ -3,6 +3,7 @@ pub mod clip;
 pub mod decay;
 pub mod radam;
 pub mod ranger;
+pub mod schedulefree;
 pub mod utils;
 pub mod wrap;
 
@@ -75,6 +76,26 @@ pub trait OptimiserState<G: Gpu>: Sized {
         gradient_factor: Arc<Buffer<G>>,
         learning_rate: Arc<Buffer<G>>,
     ) -> OptimiserUpdateResult<'a, G>;
+
+    /// Convert `weights` from training to evaluation.
+    ///
+    /// For optimisers where this matters, notably Schedule-Free.
+    fn convert_to_eval<'a>(
+        &'a mut self,
+        _stream: &Arc<Stream<G>>,
+        _weights: Arc<Buffer<G>>,
+    ) -> OptimiserUpdateResult<'a, G> {
+        Ok(OptimiserUpdateSync::default())
+    }
+
+    /// Inverse of [`OptimiserState::convert_to_eval`].
+    fn convert_to_train<'a>(
+        &'a mut self,
+        _stream: &Arc<Stream<G>>,
+        _weights: Arc<Buffer<G>>,
+    ) -> OptimiserUpdateResult<'a, G> {
+        Ok(OptimiserUpdateSync::default())
+    }
 
     fn reset(&mut self) -> Result<(), G::Error>;
 
@@ -191,6 +212,30 @@ impl<G: Gpu, S: OptimiserState<G>> Optimiser<G, S> {
         }
 
         Ok(sync)
+    }
+
+    pub fn eval_mode(&mut self) -> Result<(), G::Error> {
+        self.convert_weights(false)
+    }
+
+    pub fn train_mode(&mut self) -> Result<(), G::Error> {
+        self.convert_weights(true)
+    }
+
+    fn convert_weights(&mut self, to_train: bool) -> Result<(), G::Error> {
+        let stream = self.device.new_stream()?;
+
+        for (id, single) in &mut self.state {
+            let weights = self.weights.get(id).unwrap().clone();
+            let sync = if to_train {
+                single.convert_to_train(&stream, weights)?
+            } else {
+                single.convert_to_eval(&stream, weights)?
+            };
+            sync.sync()?;
+        }
+
+        self.sync_cpu()
     }
 
     pub fn reset_state(&mut self) -> Result<(), G::Error> {
