@@ -2,7 +2,7 @@ use bullet_lib::{
     game::{inputs::SparseInputType as _, outputs::MaterialCount},
     nn::{
         InitSettings, ModelBuilder, ModelNode, Shape,
-        optimiser::{Ranger, RangerParams},
+        optimiser::{ScheduleFreeAdamW, ScheduleFreeAdamWParams},
     },
     trainer::{
         save::SavedFormat,
@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "juice";
+const NET_ID: &str = "blind";
 
 const L1: usize = 256;
 const D: usize = 32;
@@ -78,7 +78,7 @@ fn main() {
             .dual_perspective()
             .inputs(inputs)
             .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
-            .optimiser(Ranger)
+            .optimiser(ScheduleFreeAdamW)
             .full_output()
             .save_format(&saves)
             .build_custom(|builder, (stm, ntm, buckets), targets| {
@@ -191,17 +191,23 @@ fn main() {
                 }
             });
 
-        let default_optimiser_params =
-            RangerParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
-        let l0w_optimiser_params = RangerParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
+        let default_optimiser_params = ScheduleFreeAdamWParams {
+            beta1: 0.99,
+            beta2: 0.999,
+            min_weight: -1.98,
+            max_weight: 1.98,
+            ..Default::default()
+        };
+        let l0w_optimiser_params =
+            ScheduleFreeAdamWParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
         let l1w_clip = 0.99 * 255.0 * 255.0 / (256.0 * 256.0);
         let l1w_optimiser_params =
-            RangerParams { min_weight: -l1w_clip, max_weight: l1w_clip, ..default_optimiser_params };
+            ScheduleFreeAdamWParams { min_weight: -l1w_clip, max_weight: l1w_clip, ..default_optimiser_params };
         trainer.optimiser.set_params(default_optimiser_params);
         trainer.optimiser.set_params_for_weight("l0w", l0w_optimiser_params);
         trainer.optimiser.set_params_for_weight("l1w", l1w_optimiser_params);
         // don't bother clipping the float layers
-        let no_clipping = RangerParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
+        let no_clipping = ScheduleFreeAdamWParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
         for name in [
             // "l1n_g",
             // "l1n_b",
@@ -252,26 +258,12 @@ fn main() {
         let sb_s0 = (SUPERBATCHES_STAGE0 as f64 * juice) as usize;
         let sb_s1 = (SUPERBATCHES_STAGE1 as f64 * juice) as usize;
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
-        let warmup_sbs = sb_s0 / 2;
-        let cooldown_sbs = sb_s0 - warmup_sbs;
         trainer.run(
             &stage_schedule(
                 format!("{}-s0", net_id),
                 sb_s0,
                 wdl::ConstantWDL { value: 0.2 },
-                lr::Sequence {
-                    first: lr::LinearDecayLR {
-                        initial_lr: 1e-4 * lambda,
-                        final_lr: 5e-3 * lambda,
-                        final_superbatch: warmup_sbs,
-                    },
-                    second: lr::LinearDecayLR {
-                        initial_lr: 5e-3 * lambda,
-                        final_lr: 1e-4 * lambda,
-                        final_superbatch: cooldown_sbs,
-                    },
-                    first_scheduler_final_superbatch: warmup_sbs,
-                },
+                lr::ConstantLR { value: 5e-3 * lambda },
             ),
             &settings,
             &dataloader,
@@ -282,7 +274,7 @@ fn main() {
                 format!("{}-s1", net_id),
                 sb_s1,
                 wdl::LinearWDL { start: 0.2, end: 0.5 },
-                lr::LinearDecayLR { initial_lr: 1e-3 * lambda, final_lr: 1e-6 * lambda, final_superbatch: sb_s1 },
+                lr::ConstantLR { value: 1e-3 * lambda },
             ),
             &settings,
             &dataloader,
@@ -293,7 +285,7 @@ fn main() {
                 format!("{}-s2", net_id),
                 sb_s2,
                 wdl::ConstantWDL { value: 1.0 },
-                lr::LinearDecayLR { initial_lr: 1e-5 * lambda, final_lr: 1e-7 * lambda, final_superbatch: sb_s2 },
+                lr::ConstantLR { value: 1e-5 * lambda },
             ),
             &settings,
             &dataloader,
@@ -322,20 +314,20 @@ fn main() {
     #[rustfmt::skip]
     let sweep: &[(&str, f64, f32)] = &[
         // training-time sweep at λ = 1:
-        ("0.05", 0.05, 1.0),
-        ("0.1",  0.1,  1.0),
-        ("0.2",  0.2,  1.0),
-        ("0.5",  0.5,  1.0),
-        ("1",    1.0,  1.0),
-        ("2",    2.0,  1.0),
-        ("4",    4.0,  1.0),
+        // ("0.05", 0.05, 1.0),
+        // ("0.1",  0.1,  1.0),
+        // ("0.2",  0.2,  1.0),
+        // ("0.5",  0.5,  1.0),
+        // ("1",    1.0,  1.0),
+        // ("2",    2.0,  1.0),
+        // ("4",    4.0,  1.0),
         // LR sweep at juice = 0.2:
-        // ("0.2-lr0.125", 0.2, 0.125),
-        // ("0.2-lr0.25",  0.2, 0.25),
-        // ("0.2-lr0.5",   0.2, 0.5),
-        // ("0.2-lr1",     0.2, 1.0),
-        // ("0.2-lr2",     0.2, 2.0),
-        // ("0.2-lr4",     0.2, 4.0),
+        ("0.2-lr0.125", 0.2, 0.125),
+        ("0.2-lr0.25",  0.2, 0.25),
+        ("0.2-lr0.5",   0.2, 0.5),
+        ("0.2-lr1",     0.2, 1.0),
+        ("0.2-lr2",     0.2, 2.0),
+        ("0.2-lr4",     0.2, 4.0),
     ];
 
     for &(suffix, juice, lambda) in sweep {
