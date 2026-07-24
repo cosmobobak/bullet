@@ -270,7 +270,7 @@ fn main() {
             &settings,
             &dataloader,
         );
-        trainer.optimiser.reset_state().unwrap();
+        // trainer.optimiser.reset_state().unwrap();
         trainer.run(
             &stage_schedule(format!("{}-s2", net_id), sb_s2, wdl::ConstantWDL { value: 1.0 }, lr),
             &settings,
@@ -316,9 +316,9 @@ fn main() {
         // ("0.2-lr4",     0.2, 4.0),
         // ("0.2-lr0.75",  0.2, 0.75),
         // ("0.2-lr0.375", 0.2, 0.375),
-        ("0.2-lrconst1",   0.2, 1.0),
-        ("0.2-lrconst2",   0.2, 2.0),
-        ("0.2-lrconst0.5", 0.2, 0.5),
+        ("0.2-lrconst1noresetc",   0.2, 1.0),
+        ("0.2-lrconst2noresetc",   0.2, 2.0),
+        ("0.2-lrconst0.5noresetc", 0.2, 0.5),
     ];
 
     for &(suffix, juice, lambda) in sweep {
