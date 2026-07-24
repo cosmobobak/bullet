@@ -258,35 +258,21 @@ fn main() {
         let sb_s0 = (SUPERBATCHES_STAGE0 as f64 * juice) as usize;
         let sb_s1 = (SUPERBATCHES_STAGE1 as f64 * juice) as usize;
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
+        let lr = lr::ConstantLR { value: 1e-3 * lambda };
         trainer.run(
-            &stage_schedule(
-                format!("{}-s0", net_id),
-                sb_s0,
-                wdl::ConstantWDL { value: 0.2 },
-                lr::ConstantLR { value: 5e-3 * lambda },
-            ),
+            &stage_schedule(format!("{}-s0", net_id), sb_s0, wdl::ConstantWDL { value: 0.2 }, lr.clone()),
+            &settings,
+            &dataloader,
+        );
+        // trainer.optimiser.reset_state().unwrap();
+        trainer.run(
+            &stage_schedule(format!("{}-s1", net_id), sb_s1, wdl::LinearWDL { start: 0.2, end: 0.5 }, lr.clone()),
             &settings,
             &dataloader,
         );
         trainer.optimiser.reset_state().unwrap();
         trainer.run(
-            &stage_schedule(
-                format!("{}-s1", net_id),
-                sb_s1,
-                wdl::LinearWDL { start: 0.2, end: 0.5 },
-                lr::ConstantLR { value: 1e-3 * lambda },
-            ),
-            &settings,
-            &dataloader,
-        );
-        trainer.optimiser.reset_state().unwrap();
-        trainer.run(
-            &stage_schedule(
-                format!("{}-s2", net_id),
-                sb_s2,
-                wdl::ConstantWDL { value: 1.0 },
-                lr::ConstantLR { value: 1e-5 * lambda },
-            ),
+            &stage_schedule(format!("{}-s2", net_id), sb_s2, wdl::ConstantWDL { value: 1.0 }, lr),
             &settings,
             &dataloader,
         );
@@ -328,8 +314,11 @@ fn main() {
         // ("0.2-lr2",     0.2, 2.0),
         // ("0.2-lr0.125", 0.2, 0.125),
         // ("0.2-lr4",     0.2, 4.0),
-        ("0.2-lr0.75",  0.2, 0.75),
-        ("0.2-lr0.375", 0.2, 0.375),
+        // ("0.2-lr0.75",  0.2, 0.75),
+        // ("0.2-lr0.375", 0.2, 0.375),
+        ("0.2-lrconst1",   0.2, 1.0),
+        ("0.2-lrconst2",   0.2, 2.0),
+        ("0.2-lrconst0.5", 0.2, 0.5),
     ];
 
     for &(suffix, juice, lambda) in sweep {
