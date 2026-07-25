@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "blind3";
+const NET_ID: &str = "blind4";
 
 const L1: usize = 256;
 const D: usize = 32;
@@ -258,21 +258,22 @@ fn main() {
         let sb_s0 = (SUPERBATCHES_STAGE0 as f64 * juice) as usize;
         let sb_s1 = (SUPERBATCHES_STAGE1 as f64 * juice) as usize;
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
-        let lr = lr::ConstantLR { value: 1e-3 * lambda };
+        let lr = lr::ConstantLR { value: 1e-3 };
+        let lr_finetune = lr::ConstantLR { value: 1e-5 * lambda };
         trainer.run(
             &stage_schedule(format!("{}-s0", net_id), sb_s0, wdl::ConstantWDL { value: 0.2 }, lr.clone()),
             &settings,
             &dataloader,
         );
-        // trainer.optimiser.reset_state().unwrap();
+        trainer.optimiser.reset_state().unwrap();
         trainer.run(
-            &stage_schedule(format!("{}-s1", net_id), sb_s1, wdl::LinearWDL { start: 0.2, end: 0.5 }, lr.clone()),
+            &stage_schedule(format!("{}-s1", net_id), sb_s1, wdl::LinearWDL { start: 0.2, end: 0.5 }, lr),
             &settings,
             &dataloader,
         );
-        // trainer.optimiser.reset_state().unwrap();
+        trainer.optimiser.reset_state().unwrap();
         trainer.run(
-            &stage_schedule(format!("{}-s2", net_id), sb_s2, wdl::ConstantWDL { value: 1.0 }, lr),
+            &stage_schedule(format!("{}-s2", net_id), sb_s2, wdl::ConstantWDL { value: 1.0 }, lr_finetune),
             &settings,
             &dataloader,
         );
@@ -308,17 +309,22 @@ fn main() {
         // ("2",    2.0,  1.0),
         // ("4",    4.0,  1.0),
         // LR sweep at juice = 0.2:
-        // ("0.2-lr0.5",   0.2, 0.5),
-        // ("0.2-lr1",     0.2, 1.0),
+        ("0.2-lr0.5",   0.2, 0.5),
+        ("0.2-lr1",     0.2, 1.0),
+        ("0.2-lr2",     0.2, 2.0),
+        ("0.2-lr3",     0.2, 3.0),
+        ("0.2-lr4",     0.2, 4.0),
+        ("0.2-lr5",     0.2, 5.0),
+        ("0.2-lr6",     0.2, 6.0),
+        ("0.2-lr10",     0.2, 10.0),
         // ("0.2-lr0.25",  0.2, 0.25),
-        // ("0.2-lr2",     0.2, 2.0),
         // ("0.2-lr0.125", 0.2, 0.125),
         // ("0.2-lr4",     0.2, 4.0),
         // ("0.2-lr0.75",  0.2, 0.75),
         // ("0.2-lr0.375", 0.2, 0.375),
-        ("0.2-lrconst1noresetc",   0.2, 1.0),
-        ("0.2-lrconst2noresetc",   0.2, 2.0),
-        ("0.2-lrconst0.5noresetc", 0.2, 0.5),
+        // ("0.2-lrconst1noresetc",   0.2, 1.0),
+        // ("0.2-lrconst2noresetc",   0.2, 2.0),
+        // ("0.2-lrconst0.5noresetc", 0.2, 0.5),
     ];
 
     for &(suffix, juice, lambda) in sweep {
