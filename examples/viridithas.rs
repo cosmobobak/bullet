@@ -21,9 +21,9 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "blind4";
+const NET_ID: &str = "deadeye";
 
-const L1: usize = 256;
+const L1: usize = 1024;
 const D: usize = 32;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
@@ -259,7 +259,7 @@ fn main() {
         let sb_s1 = (SUPERBATCHES_STAGE1 as f64 * juice) as usize;
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
         let lr = lr::ConstantLR { value: 1e-3 };
-        let lr_finetune = lr::ConstantLR { value: 1e-5 * lambda };
+        let lr_finetune = lr::ConstantLR { value: 6e-5 * lambda };
         trainer.run(
             &stage_schedule(format!("{}-s0", net_id), sb_s0, wdl::ConstantWDL { value: 0.2 }, lr.clone()),
             &settings,
@@ -300,31 +300,7 @@ fn main() {
     // sweep grid:
     #[rustfmt::skip]
     let sweep: &[(&str, f64, f32)] = &[
-        // training-time sweep at λ = 1:
-        // ("0.05", 0.05, 1.0),
-        // ("0.1",  0.1,  1.0),
-        // ("0.2",  0.2,  1.0),
-        // ("0.5",  0.5,  1.0),
-        // ("1",    1.0,  1.0),
-        // ("2",    2.0,  1.0),
-        // ("4",    4.0,  1.0),
-        // LR sweep at juice = 0.2:
-        ("0.2-lr0.5",   0.2, 0.5),
-        ("0.2-lr1",     0.2, 1.0),
-        ("0.2-lr2",     0.2, 2.0),
-        ("0.2-lr3",     0.2, 3.0),
-        ("0.2-lr4",     0.2, 4.0),
-        ("0.2-lr5",     0.2, 5.0),
-        ("0.2-lr6",     0.2, 6.0),
-        ("0.2-lr10",     0.2, 10.0),
-        // ("0.2-lr0.25",  0.2, 0.25),
-        // ("0.2-lr0.125", 0.2, 0.125),
-        // ("0.2-lr4",     0.2, 4.0),
-        // ("0.2-lr0.75",  0.2, 0.75),
-        // ("0.2-lr0.375", 0.2, 0.375),
-        // ("0.2-lrconst1noresetc",   0.2, 1.0),
-        // ("0.2-lrconst2noresetc",   0.2, 2.0),
-        // ("0.2-lrconst0.5noresetc", 0.2, 0.5),
+        ("1-lr1", 1.0, 1.0),
     ];
 
     for &(suffix, juice, lambda) in sweep {
