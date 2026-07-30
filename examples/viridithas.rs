@@ -21,12 +21,12 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "deadeye";
+const NET_ID: &str = "diplopia";
 
 const L1: usize = 1024;
 const D: usize = 32;
 const PROJ: usize = 1;
-const HEADS: usize = 1;
+const HEADS: usize = 2;
 
 // weight of the auxiliary WDL-classification cross-entropy loss
 // const WDL_CE_ALPHA: f32 = 0.02;
@@ -173,6 +173,20 @@ fn main() {
                     let loss = loss + 0.005 * l0_out_norm;
 
                     (l3_out, loss)
+                } else if HEADS == 2 {
+                    let target_eval = targets.slice_rows(0, 1);
+                    // rows 1/2/3 are loss/draw/win, so ½draw + win is the result in [0, 1]
+                    let target_wdl = targets.slice_rows(2, 3) * 0.5 + targets.slice_rows(3, 4);
+
+                    let eval_out = l3_out.slice_rows(0, 1);
+                    let wdl_out = l3_out.slice_rows(1, 2);
+
+                    let eval_loss = eval_out.sigmoid().squared_error(target_eval);
+                    let wdl_loss = wdl_out.sigmoid().squared_error(target_wdl);
+
+                    let loss = eval_loss + wdl_loss + 0.005 * l0_out_norm;
+
+                    (l3_out, loss)
                 } else {
                     // targets: row 0 is the WDL-blended value, rows 1..4 one-hot game result
                     let target_value = targets.slice_rows(0, 1);
@@ -259,24 +273,8 @@ fn main() {
         let sb_s1 = (SUPERBATCHES_STAGE1 as f64 * juice) as usize;
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
         let lr = lr::ConstantLR { value: 1e-3 };
-        let lr_finetune = lr::ConstantLR { value: 6e-5 * lambda };
-        trainer.run(
-            &stage_schedule(format!("{}-s0", net_id), sb_s0, wdl::ConstantWDL { value: 0.2 }, lr.clone()),
-            &settings,
-            &dataloader,
-        );
-        trainer.optimiser.reset_state().unwrap();
-        trainer.run(
-            &stage_schedule(format!("{}-s1", net_id), sb_s1, wdl::LinearWDL { start: 0.2, end: 0.5 }, lr),
-            &settings,
-            &dataloader,
-        );
-        trainer.optimiser.reset_state().unwrap();
-        trainer.run(
-            &stage_schedule(format!("{}-s2", net_id), sb_s2, wdl::ConstantWDL { value: 1.0 }, lr_finetune),
-            &settings,
-            &dataloader,
-        );
+        let wdl = wdl::ConstantWDL { value: 0.2 };
+        trainer.run(&stage_schedule(net_id.clone(), sb_s0 + sb_s1 + sb_s2, wdl, lr), &settings, &dataloader);
         trainer.optimiser.eval_mode().unwrap();
         trainer.run(
             &TrainingSchedule {
@@ -333,7 +331,7 @@ fn stage_schedule<LR: lr::LrScheduler, WDL: wdl::WdlScheduler>(
         //  CONF 8+0.08 SEC 1 THREAD 16 MB CACHE
         // GAMES 39056 = 9744W 19481D 9831L = 24.9%W 49.9%D 25.2%L
         // PENTA 85⁺² 4586⁺¹ 10086⁰ 4699⁻¹ 72⁻²
-        save_rate: 10000,
+        save_rate: 100,
     }
 }
 
