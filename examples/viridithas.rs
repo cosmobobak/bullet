@@ -174,17 +174,17 @@ fn main() {
 
                     (l3_out, loss)
                 } else if HEADS == 2 {
-                    let target_eval = targets.slice_rows(0, 1);
+                    // let target_eval = targets.slice_rows(0, 1);
                     // rows 1/2/3 are loss/draw/win, so ½draw + win is the result in [0, 1]
                     let target_wdl = targets.slice_rows(2, 3) * 0.5 + targets.slice_rows(3, 4);
 
-                    let eval_out = l3_out.slice_rows(0, 1);
+                    // let eval_out = l3_out.slice_rows(0, 1);
                     let wdl_out = l3_out.slice_rows(1, 2);
 
-                    let eval_loss = eval_out.sigmoid().squared_error(target_eval);
+                    // let eval_loss = eval_out.sigmoid().squared_error(target_eval);
                     let wdl_loss = wdl_out.sigmoid().squared_error(target_wdl);
 
-                    let loss = eval_loss + wdl_loss + 0.005 * l0_out_norm;
+                    let loss = /* eval_loss + */ wdl_loss + 0.005 * l0_out_norm;
 
                     (l3_out, loss)
                 } else {
@@ -238,7 +238,8 @@ fn main() {
         trainer
     };
 
-    let settings = || LocalSettings { threads: 4, test_set: None, output_directory: "hp-sweep", batch_queue_size: 32 };
+    let settings =
+        || LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
 
     let dataloader = || {
         bullet_lib::value::loader::ViriBinpackLoader::new(
@@ -274,8 +275,11 @@ fn main() {
         let sb_s2 = (SUPERBATCHES_STAGE2 as f64 * juice) as usize;
         let lr = lr::ConstantLR { value: 1e-3 };
         let wdl = wdl::ConstantWDL { value: 0.2 };
-        trainer.run(&stage_schedule(net_id.clone(), sb_s0 + sb_s1 + sb_s2, wdl, lr), &settings, &dataloader);
-        trainer.optimiser.eval_mode().unwrap();
+        // trainer.run(&stage_schedule(net_id.clone(), sb_s0 + sb_s1 + sb_s2, wdl, lr), &settings, &dataloader);
+        // trainer.optimiser.eval_mode().unwrap();
+        trainer
+            .optimiser
+            .load_weights_from_file("/home/cosmo/bullet/checkpoints/diplopia-1100/optimiser_state/weights.bin");
         trainer.run(
             &TrainingSchedule {
                 net_id: format!("{}-val", net_id),
