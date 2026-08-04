@@ -61,7 +61,7 @@ __device__ __forceinline__ void sfadamOp(
     const float normed = grad / (sqrtf(v[0]) + static_cast<float>(EPSILON));
     const float u = normed + static_cast<float>(DECAY) * y;
 
-    z[0] = z_old - rate * u;
+    z[0] = min(max(z_old - rate * u, static_cast<float>(WMIN)), static_cast<float>(WMAX));
 
     const float p_new = (1.0F - c) * y + c * z_old - rate * u * (1.0F - static_cast<float>(BETA1) * (1.0F - c));
     p[0] = min(max(p_new, static_cast<float>(WMIN)), static_cast<float>(WMAX));
@@ -187,7 +187,7 @@ impl ScheduleFreeAdamWParams {
 /// Kernel converting the network buffer in place via `p <- p + w * (z - p)`.
 /// With `w = 1 - 1/beta1` this maps `y -> x`, with `w = 1 - beta1` it maps
 /// `x -> y`.
-fn build_convert_op(size: usize, props: &DeviceProps) -> Result<KernelSrc, IRTrace> {
+fn build_convert_op(size: usize, props: &DeviceProps, params: &ScheduleFreeAdamWParams) -> Result<KernelSrc, IRTrace> {
     let decl = match props.dialect() {
         Dialect::CudaHip => {
             "
@@ -210,8 +210,11 @@ extern \"C\" __global__ void sfconvert(
                     const float w = w_ptr[0];
                     const float p = network[tid];
                     const float z = fast[tid];
-                    network[tid] = p + w * (z - p);
-                }}"
+                    const float converted = p + w * (z - p);
+                    network[tid] = min(max(converted, {wmin:.E}F), {wmax:.E}F);
+                }}",
+            wmin = params.min_weight,
+            wmax = params.max_weight,
         ),
         Dialect::Msl => todo!(),
     };
@@ -307,7 +310,7 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
         }
 
         let op = default_params.build(size, device.props()).unwrap().compile(device.clone())?;
-        let convert_op = build_convert_op(size, device.props()).unwrap().compile(device.clone())?;
+        let convert_op = build_convert_op(size, device.props(), &default_params).unwrap().compile(device.clone())?;
 
         Ok(Self {
             fast: Buffer::from_host(device, &TValue::zeros(DType::F32, size))?,
@@ -456,7 +459,8 @@ impl<G: Gpu> OptimiserState<G> for ScheduleFreeAdamW<G> {
         self.params = params;
         let size = self.fast.size();
         let device = self.fast.device();
-        self.op = params.build(size, device.props()).unwrap().compile(device)?;
+        self.op = params.build(size, device.props()).unwrap().compile(device.clone())?;
+        self.convert_op = build_convert_op(size, device.props(), &params).unwrap().compile(device)?;
         Ok(())
     }
 }
