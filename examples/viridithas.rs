@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sandhi";
+const NET_ID: &str = "optoisolator";
 
 const L1: usize = 1024;
 const D: usize = 32;
@@ -63,7 +63,7 @@ fn main() {
 
     let saves = [
         "l0w", "l0b", "l1w", "l1b", // "l1n_g", "l1n_b",
-        "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
+        "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb", "l2skip_a",
         // "l2down_xw",
         // "l2down_fw",
         // "l2down_xb",
@@ -126,8 +126,9 @@ fn main() {
             // let l2_out = l2x_out + l2f_out;
             let l2_out = l2_proj;
 
-            // skip connexion from l1-out to l2-out:
-            let l2_out = l2_out + l1_out;
+            // skip connexion from l1-out to l2-out
+            let alpha = builder.new_weights("l2skip_a", (D, 1), InitSettings::Normal { mean: 1.0, stdev: 0.0 });
+            let l2_out = l2_out + alpha * l1_out;
 
             let l3x_out = l3x.forward(l2_out).select(buckets);
             let l3f_out = l3f.forward(l2_out);
@@ -211,6 +212,12 @@ fn main() {
         // "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
     ] {
         trainer.optimiser.set_params_for_weight(name, no_clipping);
+    }
+
+    {
+        // no decay
+        let skip_alpha = RangerParams { decay: 0.0, ..no_clipping };
+        trainer.optimiser.set_params_for_weight("l2skip_a", skip_alpha);
     }
 
     let settings = LocalSettings { threads: 4, test_set: None, output_directory: "checkpoints", batch_queue_size: 32 };
