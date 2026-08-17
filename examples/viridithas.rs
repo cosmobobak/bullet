@@ -21,7 +21,7 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sandhi";
+const NET_ID: &str = "lazarus";
 
 const L1: usize = 1024;
 const D: usize = 32;
@@ -59,7 +59,7 @@ fn main() {
     let inputs = PawnPawnInputs::new(BUCKET_LAYOUT, pawn_pawn_inputs::three_file_band_mask());
 
     // hyperparams to fiddle with
-    let dataset_path = "data/all.vf";
+    let dataset_path = "data/all-relabelled.vf";
 
     let saves = [
         "l0w", "l0b", "l1w", "l1b", // "l1n_g", "l1n_b",
