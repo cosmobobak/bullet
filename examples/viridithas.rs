@@ -21,10 +21,10 @@ mod pawn_pawn_inputs;
 mod threat_inputs;
 mod threats;
 
-const NET_ID: &str = "sandhi";
+const NET_ID: &str = "nemmerle";
 
-const L1: usize = 1024;
-const D: usize = 32;
+const L1: usize = 1024 * 4;
+const D: usize = 32 * 4;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
 
@@ -51,9 +51,9 @@ const BUCKET_LAYOUT: [usize; 32] = [
 const BATCH_GLOM: usize = 4;
 
 // values verbatim from a pawnocchio schedule
-const SUPERBATCHES_STAGE0: usize = 100;
-const SUPERBATCHES_STAGE1: usize = 800;
-const SUPERBATCHES_STAGE2: usize = 200;
+const SUPERBATCHES_STAGE0: usize = 100 * 2;
+const SUPERBATCHES_STAGE1: usize = 800 * 2;
+const SUPERBATCHES_STAGE2: usize = 200 * 2;
 
 fn main() {
     let inputs = PawnPawnInputs::new(BUCKET_LAYOUT, pawn_pawn_inputs::three_file_band_mask());
@@ -222,7 +222,7 @@ fn main() {
         viriformat::dataformat::Filter {
             max_eval: 20_000,
             random_fen_skipping: true,
-            random_fen_skip_probability: 9.0 / 10.0,
+            random_fen_skip_probability: 19.0 / 20.0,
             ..Default::default()
         },
     );
