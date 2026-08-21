@@ -48,7 +48,7 @@ const BUCKET_LAYOUT: [usize; 32] = [
     14, 14, 15, 15,
 ];
 
-const BATCH_GLOM: usize = 4;
+const BATCH_GLOM: usize = 4 * 2;
 
 // values verbatim from a pawnocchio schedule
 const SUPERBATCHES_STAGE0: usize = 100 * 2;
