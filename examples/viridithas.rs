@@ -222,7 +222,7 @@ fn main() {
         viriformat::dataformat::Filter {
             max_eval: 20_000,
             random_fen_skipping: true,
-            random_fen_skip_probability: 19.0 / 20.0,
+            random_fen_skip_probability: 9.0 / 10.0,
             ..Default::default()
         },
     );
@@ -292,7 +292,7 @@ fn stage_schedule<LR: lr::LrScheduler, WDL: wdl::WdlScheduler>(
         //  CONF 8+0.08 SEC 1 THREAD 16 MB CACHE
         // GAMES 39056 = 9744W 19481D 9831L = 24.9%W 49.9%D 25.2%L
         // PENTA 85⁺² 4586⁺¹ 10086⁰ 4699⁻¹ 72⁻²
-        save_rate: 10000,
+        save_rate: 50,
     }
 }
 
