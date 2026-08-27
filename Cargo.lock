@@ -108,7 +108,7 @@ dependencies = [
  "bulletformat",
  "montyformat",
  "oorandom",
- "rand 0.9.4",
+ "rand 0.9.5",
  "sfbinpack",
  "viriformat",
 ]
