@@ -155,8 +155,7 @@ fn main() {
             let l0_out = stm_subnet.concat(ntm_subnet);
 
             // L₁-norm penalty on accumulator (mean, since values are non-negative):
-            let mean_l1_vec = builder.new_constant(Shape::new(1, L1), &[1.0 / L1 as f32; L1]);
-            let l0_out_norm = mean_l1_vec.matmul(l0_out);
+            let l0_out_norm = l0_out.reduce_sum_rows() / L1 as f32;
 
             let l1_out = l1.forward(l0_out).select(buckets);
             let l1_out = hard_swish(l1_out);
@@ -188,21 +187,17 @@ fn main() {
 
             let loss = if HEADS == 3 {
                 // -------- MSE --------
-                let loss_mask = builder.new_constant(Shape::new(1, 3), &[1.0, 0.0, 0.0]);
-                let draw_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 1.0, 0.0]);
-                let win_mask = builder.new_constant(Shape::new(1, 3), &[0.0, 0.0, 1.0]);
+                let loss = l3_out.slice_rows(0, 1);
+                let draw = l3_out.slice_rows(1, 2);
+                let win = l3_out.slice_rows(2, 3);
 
-                let loss = loss_mask.matmul(l3_out);
-                let draw = draw_mask.matmul(l3_out);
-                let win = win_mask.matmul(l3_out);
+                let max = loss.max(draw.max(win));
 
-                let max = maximum(loss, maximum(draw, win));
+                let loss = (loss - max).exp();
+                let draw = (draw - max).exp();
+                let win = (win - max).exp();
 
-                let loss = exp(loss - max);
-                let draw = exp(draw - max);
-                let win = exp(win - max);
-
-                let inv_sum = (win + draw + loss).abs_pow(-1.0);
+                let inv_sum = 1.0 / (win + draw + loss);
                 let win = win * inv_sum;
                 let draw = draw * inv_sum;
 
@@ -215,8 +210,7 @@ fn main() {
                 let mse_loss = mse_result.squared_error(target_value);
 
                 // -------- CE --------
-                let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-                let ce_loss = ones.matmul(l3_out.softmax_crossentropy_loss(targets));
+                let ce_loss = l3_out.softmax_crossentropy_loss(targets).reduce_sum_rows();
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
@@ -229,9 +223,8 @@ fn main() {
                 let value_loss = l3_out.sigmoid().squared_error(target_value);
 
                 // let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
-                // let ones = builder.new_constant(Shape::new(1, 3), &[1.0; 3]);
-                // let wdl_loss = ones.matmul(wdl_logits.softmax_crossentropy_loss(target_wdl));
-                // let wdl_logit_norm = ones.matmul(wdl_logits * wdl_logits);
+                // let wdl_loss = wdl_logits.softmax_crossentropy_loss(target_wdl).reduce_sum_rows();
+                // let wdl_logit_norm = (wdl_logits * wdl_logits).reduce_sum_rows();
 
                 value_loss + 0.005 * l0_out_norm // + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm;
             };
@@ -462,26 +455,9 @@ fn main() {
     }
 }
 
-fn maximum<'a>(x: ModelNode<'a>, y: ModelNode<'a>) -> ModelNode<'a> {
-    (x - y).relu() + y
-}
-
-// computes e^x via 1 / (1/σ(x) - 1), since 1/σ(x) - 1 = e^(-x)
-fn exp(x: ModelNode) -> ModelNode {
-    let sigmoid = x.sigmoid();
-    let inv_sigmoid = sigmoid.abs_pow(-1.0);
-    let e_minus_x = inv_sigmoid - 1.0;
-    e_minus_x.abs_pow(-1.0)
-}
-
 fn hard_swish(x: ModelNode) -> ModelNode {
     let gate = (x * (1.0 / 6.0) + 0.5).crelu();
     x * gate
-}
-
-fn _broadcast_rows<'a>(builder: &'a ModelBuilder, scalar: ModelNode<'a>, rows: usize) -> ModelNode<'a> {
-    let ones = builder.new_constant(Shape::new(rows, 1), &vec![1.0; rows]);
-    ones.matmul(scalar)
 }
 
 fn _rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> ModelNode<'a> {
@@ -491,7 +467,7 @@ fn _rms_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> Model
 
     // mean of squares over the feature dimension (rows), broadcast back to (n, 1)
     let mean_sq = (x * x).reduce_sum_rows() / n as f32;
-    let inv_rms = _broadcast_rows(builder, (mean_sq + EPS).abs_pow(-0.5), n);
+    let inv_rms = (mean_sq + EPS).abs_pow(-0.5).broadcast_across_rows(n);
     let normed = x * inv_rms;
 
     // γ as a 0-initialised weight offset by 1, so it starts at unity but trains
@@ -504,11 +480,11 @@ fn _layer_norm<'a>(builder: &'a ModelBuilder, id: &str, x: ModelNode<'a>) -> Mod
     let n = x.shape().rows();
     assert_eq!(x.shape().cols(), 1, "layer_norm expects a column vector");
 
-    let mean = _broadcast_rows(builder, x.reduce_sum_rows() / n as f32, n);
+    let mean = (x.reduce_sum_rows() / n as f32).broadcast_across_rows(n);
     let centred = x - mean;
 
     let var = (centred * centred).reduce_sum_rows() / n as f32;
-    let inv_std = _broadcast_rows(builder, (var + EPS).abs_pow(-0.5), n);
+    let inv_std = (var + EPS).abs_pow(-0.5).broadcast_across_rows(n);
     let normed = centred * inv_std;
 
     let gamma = 1.0 + builder.new_weights(format!("{id}_g"), Shape::new(n, 1), InitSettings::Zeroed);
