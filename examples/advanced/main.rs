@@ -26,6 +26,8 @@ use bullet_trainer::{
 };
 
 const NET_NAME: &str = "pawnocchio_new_relabeller";
+const READ_BUF_MB: usize = 8192;
+const READ_THREADS: usize = 8;
 const MAP_THREADS: u8 = 8;
 const SAVE_RATE: usize = 32;
 const DATA_PATH: &str = "data/viri.vf";
@@ -79,7 +81,7 @@ fn main() {
             let l0_pp = builder.new_affine("l0/pp/", pp.num_inputs(), L1);
 
             let l0f = builder.new_weights("l0/fac", (L1, 768), InitSettings::Zeroed);
-            let psqt_init = InitSettings::Normal { mean: 0.0, stdev: 2.0 / 32f32.sqrt() };
+            let psqt_init = InitSettings::Normal { mean: 0.0, stdev: (2f32 / 32.0).sqrt() };
             let mut l0_psqt = builder.new_weights("l0/psqt", (L1, psqt.num_inputs()), psqt_init);
             l0_psqt = l0_psqt + l0f.repeat(psqt.num_inputs() / 768);
 
@@ -94,8 +96,7 @@ fn main() {
             let ntm_hidden = ft(ntm_pp, ntm_psqt, 0, L1 / 2) * ft(ntm_pp, ntm_psqt, L1 / 2, L1);
             let l0_out = stm_hidden.concat(ntm_hidden);
 
-            let ones_l1_vec = builder.new_constant((1, L1), &[1.0 / L1 as f32; L1]);
-            let l0_out_norm = ones_l1_vec.matmul(l0_out);
+            let l0_out_norm = l0_out.reduce_sum_rows() / (L1 as f32);
 
             let l1_out = l1.forward(l0_out).select(output_buckets);
             let hl2 = l1_out.concat(l1_out.abs_pow(2.0)).crelu();
@@ -152,7 +153,7 @@ fn main() {
         SavedFormat::id("l3/b").round().quantise::<i32>(i32::from(Q).pow(4)),
     ];
 
-    let reader = ViriBinpackLoader::new(DATA_PATH, 8192, 16, ViriFilter::Custom(filter::should_keep));
+    let reader = ViriBinpackLoader::new(DATA_PATH, READ_BUF_MB, READ_THREADS, ViriFilter::Custom(filter::should_keep));
 
     let params = (&inputs, &pp, psqt, output_buckets);
 
