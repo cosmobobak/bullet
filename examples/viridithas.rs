@@ -68,6 +68,10 @@ const I8_RANGE: f32 = i8::MAX as f32 / (Q1 as f32);
 const L1_RANGE: f32 = I8_RANGE * FT_SHIFT_SCALE * FT_SHIFT_SCALE;
 const TIPP_RANGE: f32 = i8::MAX as f32 / (Q0 as f32);
 
+// TODO: Given that PSQT and TIPP features draw from differently-sized
+// subsections of the feature-set, it may make sense to init them separately.
+const FT_EFFECTIVE_INPUT_SIZE: usize = 5000;
+
 const BATCH_GLOM: usize = 4;
 
 // we could set this lower for SWA,
@@ -128,9 +132,10 @@ fn main() {
         |builder, (((((stm_tipp, ntm_tipp), stm_psqt), ntm_psqt), buckets), targets)| {
             // input layer factoriser
             let l0tipp = builder.new_affine("l0tipp", tipp.num_inputs(), L1);
+            l0tipp.init_with_effective_input_size(FT_EFFECTIVE_INPUT_SIZE);
 
             let l0fac = builder.new_weights("l0fac", Shape::new(L1, 768), InitSettings::Zeroed);
-            let psqt_init = InitSettings::Normal { mean: 0.0, stdev: 2.0 / 32f32.sqrt() };
+            let psqt_init = InitSettings::Normal { mean: 0.0, stdev: (2.0 / FT_EFFECTIVE_INPUT_SIZE as f32).sqrt() };
             let mut l0psqt = builder.new_weights("l0psqt", Shape::new(L1, psqt.num_inputs()), psqt_init);
             l0psqt = l0psqt + l0fac.repeat(psqt.num_inputs() / 768);
 
