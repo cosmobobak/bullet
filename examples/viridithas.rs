@@ -28,7 +28,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "tethys";
+const NET_ID: &str = "iapetus";
 
 const SEED: u64 = 42;
 
@@ -250,11 +250,12 @@ fn main() {
 
     optimiser.set_params(default_optimiser_params);
 
-    let l0_clip = RangerParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
+    let l0_clip = RangerParams { min_weight: -0.99, max_weight: 0.99, decay: 0., ..default_optimiser_params };
     optimiser.set_params_for_weight("l0fac", l0_clip);
     optimiser.set_params_for_weight("l0psqt", l0_clip);
 
-    let tipp_clip = RangerParams { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, ..default_optimiser_params };
+    let tipp_clip =
+        RangerParams { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, decay: 0., ..default_optimiser_params };
     optimiser.set_params_for_weight("l0tippw", tipp_clip);
 
     let l1_clip = RangerParams { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..default_optimiser_params };
