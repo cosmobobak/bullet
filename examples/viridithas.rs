@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use bullet_lib::{
     game::{
@@ -14,7 +14,10 @@ use bullet_lib::{
         wdl,
     },
     value::{
-        loader::ViriBinpackLoader,
+        loader::{
+            ViriBinpackLoader, ViriFilter,
+            viribinpack::{Board, Filter, Move, WDL},
+        },
         save::{save_to_checkpoint, write_losses},
     },
 };
@@ -23,12 +26,13 @@ use bullet_trainer::{
     reader::ReadMapLoader,
     run::{DefaultDevice, TrainingSchedule, TrainingSteps, logger, train},
 };
+use rand::{Rng as _, rng};
 
 use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "tethys";
+const NET_ID: &str = "anarres";
 
 const SEED: u64 = 42;
 
@@ -276,17 +280,7 @@ fn main() {
         optimiser.set_params_for_weight(name, no_clipping);
     }
 
-    let dataloader = ViriBinpackLoader::new(
-        dataset_path,
-        4096,
-        16,
-        viriformat::dataformat::Filter {
-            max_eval: 20_000,
-            random_fen_skipping: true,
-            random_fen_skip_probability: 9.0 / 10.0,
-            ..Default::default()
-        },
-    );
+    let dataloader = ViriBinpackLoader::new(dataset_path, 4096, 16, ViriFilter::Custom(should_keep));
 
     let params = (&inputs, &tipp, psqt, output_buckets);
 
@@ -458,6 +452,65 @@ fn main() {
         println!("FEN: {fen}");
         println!("EVAL: {}", 400.0 * value);
     }
+}
+
+#[rustfmt::skip]
+const DESIRED_DISTRIBUTION: [f64; 33] = [
+    0.018411966423, 0.020641545085, 0.022727271053,
+    0.024669162740, 0.026467201733, 0.028121406444,
+    0.029631758462, 0.030998276198, 0.032220941240,
+    0.033299772000, 0.034234750067, 0.035025893853,
+    0.035673184944, 0.036176641754, 0.036536245870,
+    0.036752015705, 0.036823932846, 0.036752015705,
+    0.036536245870, 0.036176641754, 0.035673184944,
+    0.035025893853, 0.034234750067, 0.033299772000,
+    0.032220941240, 0.030998276198, 0.029631758462,
+    0.028121406444, 0.026467201733, 0.024669162740,
+    0.022727271053, 0.020641545085, 0.018411966423,
+];
+
+fn piece_count_acceptance(board: &Board) -> f64 {
+    thread_local! {
+        static PIECE_COUNT_STATS: RefCell<[u64; 33]> = const { RefCell::new([0; 33]) };
+        static PIECE_COUNT_TOTAL: Cell<u64> = const { Cell::new(0) };
+    }
+
+    let pc = board.pieces.occupied().count() as usize;
+
+    let count = PIECE_COUNT_STATS.with_borrow_mut(|stats| {
+        stats[pc] += 1;
+        stats[pc]
+    });
+
+    let total = PIECE_COUNT_TOTAL.with(|total| {
+        let seen = total.get() + 1;
+        total.set(seen);
+        seen
+    });
+
+    let frequency = count as f64 / total as f64;
+
+    (0.5 * DESIRED_DISTRIBUTION[pc] / frequency).clamp(0.0, 1.0)
+}
+
+fn should_keep(board: &Board, mv: Move, eval: i16, wdl: f32) -> bool {
+    let filter = Filter {
+        max_eval: 20_000,
+        random_fen_skipping: true,
+        random_fen_skip_probability: 9.0 / 10.0,
+        ..Default::default()
+    };
+
+    let wdl = match wdl {
+        1.0 => WDL::Win,
+        0.5 => WDL::Draw,
+        0.0 => WDL::Loss,
+        _ => unreachable!(),
+    };
+
+    let mut rng = rng();
+
+    !filter.should_filter(mv, i32::from(eval), board, wdl, &mut rng) && rng.random_bool(piece_count_acceptance(board))
 }
 
 fn hard_swish(x: ModelNode) -> ModelNode {
