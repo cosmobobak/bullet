@@ -32,7 +32,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "anarres";
+const NET_ID: &str = "earthsea";
 
 const SEED: u64 = 42;
 
@@ -243,7 +243,7 @@ fn main() {
     );
 
     let default_optimiser_params =
-        RangerParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
+        RangerParams { beta1: 0.9, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
 
     let weights = ModelWeights::new(&defn, SEED);
     let device = DefaultDevice::new(0).unwrap();
@@ -510,7 +510,7 @@ fn should_keep(board: &Board, mv: Move, eval: i16, wdl: f32) -> bool {
 
     let mut rng = rng();
 
-    !filter.should_filter(mv, i32::from(eval), board, wdl, &mut rng) && rng.random_bool(piece_count_acceptance(board))
+    !filter.should_filter(mv, i32::from(eval), board, wdl, &mut rng) // && rng.random_bool(piece_count_acceptance(board))
 }
 
 fn hard_swish(x: ModelNode) -> ModelNode {
