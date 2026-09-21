@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::BTreeSet};
 
 use bullet_lib::{
     game::{
@@ -6,7 +6,7 @@ use bullet_lib::{
         outputs::MaterialCount,
     },
     nn::{
-        InitSettings, ModelBuilder, ModelNode, Shape,
+        ExecutionContext, InitSettings, ModelBuilder, ModelNode, Shape,
         optimiser::{Optimiser, RangerOptimiser, RangerParams},
     },
     trainer::schedule::{
@@ -28,11 +28,13 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "tethys";
+const NET_ID: &str = "galileo-base";
+
+const CHECKPOINT_DIR: &str = "galileo-tests";
 
 const SEED: u64 = 42;
 
-const L1: usize = 1024;
+const L1: usize = 256;
 const D: usize = 32;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
@@ -62,6 +64,7 @@ const INPUT_BUCKETS: usize = get_num_buckets(&BUCKET_LAYOUT);
 const Q0: i16 = 255;
 const Q1: i16 = 128;
 
+// TODO: this is different from the one in the engine!
 const FT_SHIFT: usize = 8;
 const FT_SHIFT_SCALE: f32 = Q0 as f32 / ((1 << FT_SHIFT) as f32);
 const I8_RANGE: f32 = i8::MAX as f32 / (Q1 as f32);
@@ -88,6 +91,72 @@ const SAVE_RATE: usize = 10000;
 const SUPERBATCHES_STAGE0: usize = 100;
 const SUPERBATCHES_STAGE1: usize = 800;
 const SUPERBATCHES_STAGE2: usize = 200;
+
+/// Apply per-param optimiser hyperparameters.
+fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimiser>) {
+    type P = RangerParams;
+    let base = P {
+        // Typical is beta1 = 0.9, but that kinda sucked for us.
+        beta1: 0.99,
+        beta2: 0.999,
+        min_weight: -1.98,
+        max_weight: 1.98,
+        decay: 0.01,
+        alpha: 0.5,
+        k: 6,
+    };
+    let groups: [(&[&str], P); 6] = [
+        (&["l0fac", "l0psqt"], P { min_weight: -0.99, max_weight: 0.99, ..base }),
+        (&["l0tippw"], P { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, ..base }),
+        (&["l1w"], P { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..base }),
+        (&["l0tippb"], base),
+        // don't bother clipping the float layers
+        (
+            &[
+                // "l1n_g",
+                "l2up_xw", "l2up_fw", // "l2down_xw",
+                // "l2down_fw",
+                "l3xw", "l3fw",
+                // "l3wdl_xw",
+                // "l3wdl_fw",
+            ],
+            P { min_weight: -128.0, max_weight: 128.0, ..base },
+        ),
+        // and turn off weight decay for float biases
+        (
+            &[
+                "l1b", // "l1n_b",
+                "l2up_xb", "l2up_fb",
+                // "l2down_xb",
+                // "l2down_fb",
+                // "l3wdl_xb",
+                // "l3wdl_fb",
+                "l3xb", "l3fb",
+            ],
+            P { min_weight: -128.0, max_weight: 128.0, decay: 0.0, ..base },
+        ),
+    ];
+
+    let mut named = BTreeSet::new();
+
+    for (names, _) in groups {
+        for name in names {
+            assert!(named.insert(*name), "weight {name} is used in more than one group");
+        }
+    }
+
+    let all = optimiser.weights().keys().map(String::as_str).collect::<BTreeSet<_>>();
+
+    let unnamed = all.difference(&named).copied().collect::<Vec<_>>();
+    assert!(unnamed.is_empty(), "weights not set: {unnamed:?}");
+    let unknown = named.difference(&all).copied().collect::<Vec<_>>();
+    assert!(unknown.is_empty(), "weights not found: {unknown:?}");
+    for (names, params) in groups {
+        for name in names {
+            optimiser.set_params_for_weight(name, params);
+        }
+    }
+}
 
 fn main() {
     let tipp = TiPpInputs::new(tipp_inputs::three_file_band_mask());
@@ -238,43 +307,14 @@ fn main() {
         },
     );
 
-    let default_optimiser_params =
-        RangerParams { beta1: 0.99, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, ..Default::default() };
-
     let weights = ModelWeights::new(&defn, SEED);
     let device = DefaultDevice::new(0).unwrap();
 
     let mut evaluator = ModelEvaluator::new(&defn, device.clone()).unwrap();
     let mut optimiser =
-        Optimiser::<_, RangerOptimiser>::new(defn, weights, device.clone(), default_optimiser_params).unwrap();
+        Optimiser::<_, RangerOptimiser>::new(defn, weights, device.clone(), RangerParams::default()).unwrap();
 
-    optimiser.set_params(default_optimiser_params);
-
-    let l0_clip = RangerParams { min_weight: -0.99, max_weight: 0.99, ..default_optimiser_params };
-    optimiser.set_params_for_weight("l0fac", l0_clip);
-    optimiser.set_params_for_weight("l0psqt", l0_clip);
-
-    let tipp_clip = RangerParams { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, ..default_optimiser_params };
-    optimiser.set_params_for_weight("l0tippw", tipp_clip);
-
-    let l1_clip = RangerParams { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..default_optimiser_params };
-    optimiser.set_params_for_weight("l1w", l1_clip);
-
-    // don't bother clipping the float layers
-    let no_clipping = RangerParams { min_weight: -128.0, max_weight: 128.0, ..default_optimiser_params };
-    for name in [
-        // "l1n_g",
-        // "l1n_b",
-        "l2up_xw", "l2up_xb", "l2up_fw", "l2up_fb",
-        // "l2down_xw",
-        // "l2down_xb",
-        // "l2down_fw",
-        // "l2down_fb",
-        "l3xw", "l3xb", "l3fw", "l3fb",
-        // "l3wdl_xw", "l3wdl_xb", "l3wdl_fw", "l3wdl_fb",
-    ] {
-        optimiser.set_params_for_weight(name, no_clipping);
-    }
+    set_optimiser_params(&mut optimiser);
 
     let dataloader = ViriBinpackLoader::new(
         dataset_path,
@@ -290,7 +330,7 @@ fn main() {
 
     let params = (&inputs, &tipp, psqt, output_buckets);
 
-    let _ = std::fs::create_dir("checkpoints");
+    let _ = std::fs::create_dir(CHECKPOINT_DIR);
 
     let mut run = |stage, end_superbatch, lr_schedule, mapper| {
         let net_id = format!("{NET_ID}-s{stage}");
@@ -331,7 +371,7 @@ fn main() {
                 let superbatch = step.superbatch();
                 if superbatch % SAVE_RATE == 0 || superbatch == step.final_superbatch() {
                     let name = format!("{net_id}-{superbatch}");
-                    let path = format!("checkpoints/{name}");
+                    let path = format!("{CHECKPOINT_DIR}/{name}");
                     std::fs::create_dir(path.as_str()).unwrap_or(());
                     save_to_checkpoint(optimiser, &saves, &path);
                     write_losses(&format!("{path}/log.txt"), &error_record.borrow());
