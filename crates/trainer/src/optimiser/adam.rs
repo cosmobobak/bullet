@@ -24,22 +24,25 @@ pub struct AdamWParams {
     pub beta2: f32,
     pub min_weight: f32,
     pub max_weight: f32,
+    pub lr_scale: f32,
 }
 
 impl Default for AdamWParams {
     fn default() -> Self {
-        Self { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -1.98, max_weight: 1.98 }
+        Self { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, lr_scale: 1.0 }
     }
 }
 
 const OP_CUDA: &str = "\
 __device__ __forceinline__ void adamOp(
     const float grad,
-    const float rate,
+    const float base_rate,
     float* p,
     float* m,
     float* v
 ) {
+    const float rate = base_rate * static_cast<float>(LRSCALE);
+
     p[0] *= 1.0F - static_cast<float>(DECAY) * rate;
 
     m[0] = static_cast<float>(BETA1) * m[0] + (1.0F - static_cast<float>(BETA1)) * grad;
@@ -67,11 +70,13 @@ using namespace metal;
 
 inline void adamOp(
     const float grad,
-    const float rate,
+    const float base_rate,
     thread float* p,
     thread float* m,
     thread float* v
 ) {
+    const float rate = base_rate * float(LRSCALE);
+
     p[0] *= 1.0f - float(DECAY) * rate;
 
     m[0] = float(BETA1) * m[0] + (1.0f - float(BETA1)) * grad;
@@ -107,6 +112,7 @@ impl AdamWParams {
             .replace("BETA2", &format!("{:.E}", self.beta2))
             .replace("WMIN", &format!("{:.E}", self.min_weight))
             .replace("WMAX", &format!("{:.E}", self.max_weight))
+            .replace("LRSCALE", &format!("{:.E}", self.lr_scale))
             .replace("EPSILON", "0.00000001F");
 
         let body = match props.dialect() {

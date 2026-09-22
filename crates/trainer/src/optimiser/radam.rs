@@ -23,23 +23,26 @@ pub struct RAdamParams {
     pub n_sma_threshold: f32,
     pub decay: f32,
     pub clip: Option<(f32, f32)>,
+    pub lr_scale: f32,
 }
 
 impl Default for RAdamParams {
     fn default() -> Self {
-        Self { beta1: 0.9, beta2: 0.999, n_sma_threshold: 5.0, decay: 0.0, clip: None }
+        Self { beta1: 0.9, beta2: 0.999, n_sma_threshold: 5.0, decay: 0.0, clip: None, lr_scale: 1.0 }
     }
 }
 
 const OP_CUDA: &str = "\
 __device__ __forceinline__ void radamOp(
     const float grad,
-    const float rate,
+    const float base_rate,
     const int denom,
     float* p,
     float* m,
     float* v
 ) {
+    const float rate = base_rate * static_cast<float>(LRSCALE);
+
     p[0] *= 1.0F - static_cast<float>(DECAY) * rate;
 
     m[0] = static_cast<float>(BETA1) * m[0] + (1.0F - static_cast<float>(BETA1)) * grad;
@@ -70,12 +73,14 @@ using namespace metal;
 
 inline void radamOp(
     const float grad,
-    const float rate,
+    const float base_rate,
     const int denom,
     thread float* p,
     thread float* m,
     thread float* v
 ) {
+    const float rate = base_rate * float(LRSCALE);
+
     p[0] *= 1.0f - float(DECAY) * rate;
 
     m[0] = float(BETA1) * m[0] + (1.0f - float(BETA1)) * grad;
@@ -116,6 +121,7 @@ impl RAdamParams {
             .replace("BETA2", &format!("{:.E}", self.beta2))
             .replace("WMIN", &format!("{min:.E}"))
             .replace("WMAX", &format!("{max:.E}"))
+            .replace("LRSCALE", &format!("{:.E}", self.lr_scale))
             .replace("EPSILON", "0.00000001F");
 
         let body = match props.dialect() {
