@@ -28,7 +28,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "galileo-base";
+const NET_ID: &str = "galileo-base-apriori";
 
 const CHECKPOINT_DIR: &str = "galileo-tests";
 
@@ -74,6 +74,9 @@ const TIPP_RANGE: f32 = i8::MAX as f32 / (Q0 as f32);
 // TODO: Given that PSQT and TIPP features draw from differently-sized
 // subsections of the feature-set, it may make sense to init them separately.
 const FT_EFFECTIVE_INPUT_SIZE: usize = 5000;
+// For μP scaling. We pretend that every layer has a
+// “natural” fan-in of 256, and scale LRs appropriately.
+const REF_FAN_IN: usize = 256;
 
 const BATCH_GLOM: usize = 4;
 
@@ -104,23 +107,36 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
         decay: 0.01,
         alpha: 0.5,
         k: 6,
+        lr_scale: 1.0,
     };
-    let groups: [(&[&str], P); 6] = [
+
+    let μp = |fan_in: usize, params: P| {
+        let lr_scale = REF_FAN_IN as f32 / fan_in as f32;
+        // TODO: Check how decay interacts with μP
+        P { lr_scale, decay: params.decay / lr_scale, ..params }
+    };
+
+    let groups: [(&[&str], P); 7] = [
         (&["l0fac", "l0psqt"], P { min_weight: -0.99, max_weight: 0.99, ..base }),
         (&["l0tippw"], P { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, ..base }),
-        (&["l1w"], P { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..base }),
+        (&["l1w"], μp(L1, P { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..base })),
         (&["l0tippb"], base),
         // don't bother clipping the float layers
         (
             &[
                 // "l1n_g",
-                "l2up_xw", "l2up_fw", // "l2down_xw",
-                // "l2down_fw",
-                "l3xw", "l3fw",
+                "l2up_xw", "l2up_fw", "l3xw", "l3fw",
                 // "l3wdl_xw",
                 // "l3wdl_fw",
             ],
-            P { min_weight: -128.0, max_weight: 128.0, ..base },
+            μp(D, P { min_weight: -128.0, max_weight: 128.0, ..base }),
+        ),
+        (
+            &[
+                // "l2down_xw",
+                // "l2down_fw",
+            ],
+            μp(D * PROJ, P { min_weight: -128.0, max_weight: 128.0, ..base }),
         ),
         // and turn off weight decay for float biases
         (
