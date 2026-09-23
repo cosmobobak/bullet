@@ -60,6 +60,8 @@ pub struct RangerLookahead<G: Gpu, S> {
     k: usize,
     step: usize,
     op: CompiledKernel<G>,
+    copy_op: CompiledKernel<G>,
+    slow_initialised: bool,
 }
 
 impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for RangerLookahead<G, S> {
@@ -68,6 +70,8 @@ impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for RangerLookahead<G, S> {
     fn new(device: &Arc<Device<G>>, size: usize, params: Self::Params) -> Result<Self, G::Error> {
         Ok(Self {
             op: build_ranger_op(size, params.alpha, device.props()).unwrap().compile(device.clone())?,
+            copy_op: build_ranger_op(size, 1.0, device.props()).unwrap().compile(device.clone())?,
+            slow_initialised: false,
             slow_params: Buffer::from_host(device, &TValue::F32(vec![0.0; size]))?,
             inner: S::new(device, size, params.inner.clone())?,
             k: params.k,
@@ -84,6 +88,15 @@ impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for RangerLookahead<G, S> {
         learning_rate: Arc<Buffer<G>>,
     ) -> OptimiserUpdateResult<'a, G> {
         let mut blocks = OptimiserUpdateSync::default();
+
+        if !self.slow_initialised {
+            blocks.push_kernel(self.copy_op.execute(
+                stream.clone(),
+                Vec::new(),
+                vec![weights.clone(), self.slow_params.clone()],
+            )?);
+            self.slow_initialised = true;
+        }
 
         self.step += 1;
         blocks.extend_by(self.inner.update(stream, weights.clone(), grads, gradient_factor, learning_rate)?);
@@ -116,6 +129,7 @@ impl<G: Gpu, S: OptimiserState<G>> OptimiserState<G> for RangerLookahead<G, S> {
         for (id, par) in slow_params {
             let single = map.get_mut(&id).unwrap();
             single.slow_params.copy_from_host(&TValue::F32(par))?;
+            single.slow_initialised = true;
         }
 
         let mut map = map.iter_mut().map(|(id, single)| (id.clone(), &mut single.inner)).collect();
