@@ -28,13 +28,13 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "galileo-base-apriori";
+const NET_ID: &str = "galileo";
 
-const CHECKPOINT_DIR: &str = "galileo-tests";
+const CHECKPOINT_DIR: &str = "checkpoints";
 
 const SEED: u64 = 42;
 
-const L1: usize = 256;
+const L1: usize = 1024;
 const D: usize = 32;
 const PROJ: usize = 1;
 const HEADS: usize = 1;
@@ -112,7 +112,6 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
 
     let μp = |fan_in: usize, params: P| {
         let lr_scale = REF_FAN_IN as f32 / fan_in as f32;
-        // TODO: Check how decay interacts with μP
         P { lr_scale, decay: params.decay / lr_scale, ..params }
     };
 

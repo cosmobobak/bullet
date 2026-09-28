@@ -66,7 +66,7 @@ impl SwaOptions {
         // quantised.bin for float save formats
         let overhang = buf.len() % 64;
         if overhang > 0 {
-            let chs = [b'b', b'u', b'l', b'l', b'e', b't'];
+            let chs = *b"bullet";
             for i in 0..64 - overhang {
                 buf.push(chs[i % chs.len()]);
             }
