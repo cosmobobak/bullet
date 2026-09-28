@@ -6,7 +6,7 @@ use bullet_lib::{
         outputs::MaterialCount,
     },
     nn::{
-        ExecutionContext, InitSettings, ModelBuilder, ModelNode, Shape,
+        Affine, ExecutionContext, InitSettings, ModelBuilder, ModelNode, Shape,
         optimiser::{Optimiser, RangerOptimiser, RangerParams},
     },
     trainer::schedule::{
@@ -28,7 +28,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "galileo";
+const NET_ID: &str = "nous";
 
 const CHECKPOINT_DIR: &str = "checkpoints";
 
@@ -115,7 +115,7 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
         P { lr_scale, decay: params.decay / lr_scale, ..params }
     };
 
-    let groups: [(&[&str], P); 7] = [
+    let groups: [(&[&str], P); 6] = [
         (&["l0fac", "l0psqt"], P { min_weight: -0.99, max_weight: 0.99, ..base }),
         (&["l0tippw"], P { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, ..base }),
         (&["l1w"], μp(L1, P { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..base })),
@@ -124,29 +124,19 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
         (
             &[
                 // "l1n_g",
-                "l2up_xw", "l2up_fw", "l3xw", "l3fw",
-                // "l3wdl_xw",
-                // "l3wdl_fw",
+                "l2xw", "l2fw", "l3xw", "l3fw", "l4xw", "l4fw",
+                // "l4wdl_xw",
+                // "l4wdl_fw",
             ],
             μp(D, P { min_weight: -128.0, max_weight: 128.0, ..base }),
-        ),
-        (
-            &[
-                // "l2down_xw",
-                // "l2down_fw",
-            ],
-            μp(D * PROJ, P { min_weight: -128.0, max_weight: 128.0, ..base }),
         ),
         // and turn off weight decay for float biases
         (
             &[
                 "l1b", // "l1n_b",
-                "l2up_xb", "l2up_fb",
-                // "l2down_xb",
-                // "l2down_fb",
-                // "l3wdl_xb",
-                // "l3wdl_fb",
-                "l3xb", "l3fb",
+                "l2xb", "l2fb", "l3xb", "l3fb", // "l4wdl_xb",
+                // "l4wdl_fb",
+                "l4xb", "l4fb",
             ],
             P { min_weight: -128.0, max_weight: 128.0, decay: 0.0, ..base },
         ),
@@ -193,12 +183,7 @@ fn main() {
     saves.extend(
         [
             "l0tippb", "l1w", "l1b", // "l1n_g", "l1n_b",
-            "l2up_xw", "l2up_fw", "l2up_xb", "l2up_fb",
-            // "l2down_xw",
-            // "l2down_fw",
-            // "l2down_xb",
-            // "l2down_fb",
-            "l3xw", "l3fw", "l3xb", "l3fb",
+            "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb", "l4xw", "l4fw", "l4xb", "l4fb",
         ]
         .map(SavedFormat::id),
     );
@@ -225,15 +210,15 @@ fn main() {
 
             // layerstack weights
             let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
-            let l2up_x = builder.new_affine("l2up_x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
-            let l2up_f = builder.new_affine("l2up_f", D, D * PROJ * 2);
-            // let l2down_x = builder.new_affine("l2down_x", D * PROJ, NUM_OUTPUT_BUCKETS * D);
-            // let l2down_f = builder.new_affine("l2down_f", D * PROJ, D);
-            let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * HEADS);
-            let l3f = builder.new_affine("l3f", D, HEADS);
+            let l2x = builder.new_affine("l2x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
+            let l2f = builder.new_affine("l2f", D, D * PROJ * 2);
+            let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
+            let l3f = builder.new_affine("l3f", D, D * PROJ * 2);
+            let l4x = builder.new_affine("l4x", D, NUM_OUTPUT_BUCKETS * HEADS);
+            let l4f = builder.new_affine("l4f", D, HEADS);
             // auxiliary WDL-classification head, training-only (not saved)
-            // let l3wdl_x = builder.new_affine("l3wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
-            // let l3wdl_f = builder.new_affine("l3wdl_f", D, 3);
+            // let l4wdl_x = builder.new_affine("l4wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
+            // let l4wdl_f = builder.new_affine("l4wdl_f", D, 3);
 
             // inference
             let ft = |tipp, psqt, start, end| {
@@ -252,33 +237,16 @@ fn main() {
             // let l1n_out = rms_norm(builder, "l1n", l1_out);
             let l1n_out = l1_out; // todo: test norm.
 
-            // up-projection:
-            let l2x_proj = l2up_x.forward(l1n_out).select(buckets);
-            let l2f_proj = l2up_f.forward(l1n_out);
-            let l2_proj = l2x_proj + l2f_proj;
-            // activation:
-            let l2_proj_gate = hard_swish(l2_proj.slice_rows(0, D * PROJ));
-            let l2_proj_id = l2_proj.slice_rows(D * PROJ, D * PROJ * 2);
-            let l2_proj = l2_proj_gate * l2_proj_id;
-            // down-projection:
-            // let l2x_out = l2down_x.forward(l2_proj).select(buckets);
-            // let l2f_out = l2down_f.forward(l2_proj);
-            // let l2_out = l2x_out + l2f_out;
-            let l2_out = l2_proj;
+            let l2_out = glu(l2x, l2f, l1n_out, buckets) + l1_out;
+            let l3_out = glu(l3x, l3f, l2_out, buckets) + l2_out;
 
-            // skip connexion from l1-out to l2-out:
-            let l2_out = l2_out + l1_out;
-
-            let l3x_out = l3x.forward(l2_out).select(buckets);
-            let l3f_out = l3f.forward(l2_out);
-
-            let l3_out = l3x_out + l3f_out;
+            let l4_out = l4x.forward(l3_out).select(buckets) + l4f.forward(l3_out);
 
             let loss = if HEADS == 3 {
                 // -------- MSE --------
-                let loss = l3_out.slice_rows(0, 1);
-                let draw = l3_out.slice_rows(1, 2);
-                let win = l3_out.slice_rows(2, 3);
+                let loss = l4_out.slice_rows(0, 1);
+                let draw = l4_out.slice_rows(1, 2);
+                let win = l4_out.slice_rows(2, 3);
 
                 let max = loss.max(draw.max(win));
 
@@ -299,7 +267,7 @@ fn main() {
                 let mse_loss = mse_result.squared_error(target_value);
 
                 // -------- CE --------
-                let ce_loss = l3_out.softmax_crossentropy_loss(targets).reduce_sum_rows();
+                let ce_loss = l4_out.softmax_crossentropy_loss(targets).reduce_sum_rows();
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
@@ -309,16 +277,16 @@ fn main() {
                 let target_value = targets.slice_rows(0, 1);
                 // let target_wdl = targets.slice_rows(1, 4);
 
-                let value_loss = l3_out.sigmoid().squared_error(target_value);
+                let value_loss = l4_out.sigmoid().squared_error(target_value);
 
-                // let wdl_logits = l3wdl_x.forward(l2_out).select(buckets) + l3wdl_f.forward(l2_out);
+                // let wdl_logits = l4wdl_x.forward(l3_out).select(buckets) + l4wdl_f.forward(l3_out);
                 // let wdl_loss = wdl_logits.softmax_crossentropy_loss(target_wdl).reduce_sum_rows();
                 // let wdl_logit_norm = (wdl_logits * wdl_logits).reduce_sum_rows();
 
                 value_loss + 0.005 * l0_out_norm // + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm;
             };
 
-            (Some(loss.reduce_sum_batch()), vec![("output".to_string(), l3_out)])
+            (Some(loss.reduce_sum_batch()), vec![("output".to_string(), l4_out)])
         },
     );
 
@@ -514,6 +482,13 @@ fn main() {
         println!("FEN: {fen}");
         println!("EVAL: {}", 400.0 * value);
     }
+}
+
+fn glu<'a>(x: Affine<'a>, f: Affine<'a>, input: ModelNode<'a>, buckets: ModelNode<'a>) -> ModelNode<'a> {
+    let proj = x.forward(input).select(buckets) + f.forward(input);
+    let gate = hard_swish(proj.slice_rows(0, D * PROJ));
+    let id = proj.slice_rows(D * PROJ, D * PROJ * 2);
+    gate * id
 }
 
 fn hard_swish(x: ModelNode) -> ModelNode {
