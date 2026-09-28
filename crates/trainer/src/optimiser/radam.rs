@@ -24,11 +24,12 @@ pub struct RAdamParams {
     pub n_sma_threshold: f32,
     pub decay: f32,
     pub clip: Option<(f32, f32)>,
+    pub lr_scale: f32,
 }
 
 impl Default for RAdamParams {
     fn default() -> Self {
-        Self { beta1: 0.9, beta2: 0.999, n_sma_threshold: 5.0, decay: 0.0, clip: None }
+        Self { beta1: 0.9, beta2: 0.999, n_sma_threshold: 5.0, decay: 0.0, clip: None, lr_scale: 1.0 }
     }
 }
 
@@ -51,7 +52,7 @@ impl RAdamParams {
         let velocity_buf = builder.new_buffer(ty);
 
         let adj = adj_buf.read(0, 0).splat(p2size);
-        let rate = (rate_buf.read(0, 0) * step_size_buf.read(0, 0)).splat(p2size);
+        let rate = (self.lr_scale * rate_buf.read(0, 0) * step_size_buf.read(0, 0)).splat(p2size);
         let denom = denom_buf.read(0, 0).cast(DType::F32).splat(p2size);
 
         let tid = builder.tid();

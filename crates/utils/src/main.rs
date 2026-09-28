@@ -3,6 +3,7 @@ mod count_buckets;
 mod interleave;
 mod montybinpack;
 mod shuffle;
+mod swa;
 mod validate;
 mod viribinpack;
 
@@ -18,6 +19,7 @@ pub enum Options {
     BucketCount(count_buckets::ValidateOptions),
     Montybinpack(montybinpack::MontyBinpackOptions),
     Viribinpack(viribinpack::ViriBinpackOptions),
+    Swa(swa::SwaOptions),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -29,6 +31,7 @@ fn main() -> anyhow::Result<()> {
         Options::BucketCount(options) => options.run(),
         Options::Montybinpack(options) => options.run(),
         Options::Viribinpack(options) => options.run(),
+        Options::Swa(options) => options.run(),
     }
 }
 

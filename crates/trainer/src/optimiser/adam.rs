@@ -22,11 +22,12 @@ pub struct AdamWParams {
     pub beta2: f32,
     pub min_weight: f32,
     pub max_weight: f32,
+    pub lr_scale: f32,
 }
 
 impl Default for AdamWParams {
     fn default() -> Self {
-        Self { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -1.98, max_weight: 1.98 }
+        Self { decay: 0.01, beta1: 0.9, beta2: 0.999, min_weight: -1.98, max_weight: 1.98, lr_scale: 1.0 }
     }
 }
 
@@ -45,7 +46,7 @@ impl AdamWParams {
         let velocity_buf = builder.new_buffer(ty);
 
         let adj = adj_buf.read(0, 0).splat(p2size);
-        let rate = rate_buf.read(0, 0).splat(p2size);
+        let rate = (self.lr_scale * rate_buf.read(0, 0)).splat(p2size);
 
         let tid = builder.tid();
         let grad = adj * grad_buf.read(tid, p2size);

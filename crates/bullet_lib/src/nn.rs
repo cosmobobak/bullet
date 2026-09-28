@@ -54,6 +54,7 @@ pub mod optimiser {
         pub beta2: f32,
         pub min_weight: f32,
         pub max_weight: f32,
+        pub lr_scale: f32,
     }
 
     impl From<RAdamParams> for radam::RAdamParams {
@@ -64,6 +65,7 @@ pub mod optimiser {
                 n_sma_threshold: 5.0,
                 decay: value.decay,
                 clip: Some((value.min_weight, value.max_weight)),
+                lr_scale: value.lr_scale,
             }
         }
     }

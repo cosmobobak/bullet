@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
 use structopt::StructOpt;
 use viriformat::dataformat::Game;
 
@@ -19,19 +20,25 @@ pub struct InterleaveOptions {
 
 impl InterleaveOptions {
     pub fn run(&self) -> anyhow::Result<()> {
-        println!("Writing to {:#?}", self.output);
-        println!("Reading from:\n{:#?}", self.inputs);
+        println!("Writing to {}", self.output.display());
+        println!("Reading from:");
+        for path in &self.inputs {
+            println!("  {}", path.display());
+        }
         let mut streams = Vec::new();
         let mut total = 0;
 
-        let target = File::create(&self.output)?;
+        let target = File::create(&self.output)
+            .with_context(|| format!("Failed to create output file {}", self.output.display()))?;
         let mut writer = BufWriter::new(target);
 
         let mut total_input_file_size = 0;
         for path in &self.inputs {
-            let file = File::open(path)?;
+            let file = File::open(path).with_context(|| format!("Failed to open input file {}", path.display()))?;
 
-            total_input_file_size += file.metadata()?.len();
+            let metadata =
+                file.metadata().with_context(|| format!("Failed to get metadata for input file {}", path.display()))?;
+            total_input_file_size += metadata.len();
 
             let count = count_games(path)?;
 
@@ -59,16 +66,17 @@ impl InterleaveOptions {
                 idx += 1;
             }
 
-            let (count, reader, _) = &mut streams[idx];
+            let (count, reader, name) = &mut streams[idx];
 
             buffer.clear();
-            Game::deserialise_fast_into_buffer(reader, &mut buffer)?;
-            writer.write_all(&buffer)?;
+            Game::deserialise_fast_into_buffer(reader, &mut buffer)
+                .with_context(|| format!("Failed to read game from {name}"))?;
+            writer.write_all(&buffer).with_context(|| format!("Failed to write game from {name}"))?;
 
             remaining -= 1;
             *count -= 1;
             if *count == 0 {
-                println!("Finished reading {}", streams[idx].2);
+                println!("Finished reading {name}");
                 streams.swap_remove(idx);
             }
 
@@ -80,13 +88,17 @@ impl InterleaveOptions {
             }
         }
 
-        writer.flush()?;
+        writer.flush().with_context(|| format!("Failed to flush output file {}", self.output.display()))?;
 
         println!();
-        println!("Written {total} games to {:#?}", self.output);
+        println!("Written {total} games to {}", self.output.display());
 
-        let output_file = File::open(&self.output)?;
-        let output_file_size = output_file.metadata()?.len();
+        let output_file = File::open(&self.output)
+            .with_context(|| format!("Failed to open output file {}", self.output.display()))?;
+        let metadata = output_file
+            .metadata()
+            .with_context(|| format!("Failed to get metadata for output file {}", self.output.display()))?;
+        let output_file_size = metadata.len();
         if output_file_size != total_input_file_size {
             anyhow::bail!("Output file size {output_file_size} does not match input file size {total_input_file_size}");
         }

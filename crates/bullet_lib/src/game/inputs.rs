@@ -1,6 +1,7 @@
 mod adapter;
 mod ataxx147;
 mod chess768;
+mod chess768_passers;
 mod chess_buckets;
 mod factorised;
 
@@ -8,6 +9,7 @@ pub use adapter::MarlinFormatAdapter;
 pub use ataxx147::{Ataxx98, Ataxx147};
 pub use chess_buckets::{ChessBuckets, ChessBucketsMirrored};
 pub use chess768::Chess768;
+pub use chess768_passers::Chess768Passers;
 pub use factorised::{Factorised, Factorises};
 
 pub trait SparseInputType: Clone + Send + Sync + 'static {

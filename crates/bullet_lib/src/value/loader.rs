@@ -26,6 +26,13 @@ pub enum GameResult {
     Win = 2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetType {
+    Value,
+    WDL,
+    ValueAndWDL,
+}
+
 pub trait LoadableDataType: Sized {
     fn score(&self) -> i16;
 
