@@ -28,7 +28,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "nous";
+const NET_ID: &str = "nous-sp";
 
 const CHECKPOINT_DIR: &str = "checkpoints";
 
@@ -78,6 +78,8 @@ const FT_EFFECTIVE_INPUT_SIZE: usize = 5000;
 // “natural” fan-in of 256, and scale LRs appropriately.
 const REF_FAN_IN: usize = 256;
 
+const MUP: bool = false;
+
 const BATCH_GLOM: usize = 4;
 
 // we could set this lower for SWA,
@@ -111,6 +113,9 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
     };
 
     let μp = |fan_in: usize, params: P| {
+        if !MUP {
+            return params;
+        }
         let lr_scale = REF_FAN_IN as f32 / fan_in as f32;
         P { lr_scale, decay: params.decay / lr_scale, ..params }
     };
