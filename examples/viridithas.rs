@@ -28,7 +28,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "nous-sp";
+const NET_ID: &str = "ashen";
 
 const CHECKPOINT_DIR: &str = "checkpoints";
 
@@ -124,14 +124,13 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
         (&["l0fac", "l0psqt"], P { min_weight: -0.99, max_weight: 0.99, ..base }),
         (&["l0tippw"], P { min_weight: -TIPP_RANGE, max_weight: TIPP_RANGE, ..base }),
         (&["l1w"], μp(L1, P { min_weight: -L1_RANGE, max_weight: L1_RANGE, ..base })),
-        (&["l0tippb"], base),
+        (&["l0tippb", "l0material"], base),
         // don't bother clipping the float layers
         (
             &[
                 // "l1n_g",
-                "l2xw", "l2fw", "l3xw", "l3fw", "l4xw", "l4fw",
-                // "l4wdl_xw",
-                // "l4wdl_fw",
+                "l2w", "l3w",
+                // "l3wdlw",
             ],
             μp(D, P { min_weight: -128.0, max_weight: 128.0, ..base }),
         ),
@@ -139,9 +138,8 @@ fn set_optimiser_params(optimiser: &mut Optimiser<ExecutionContext, RangerOptimi
         (
             &[
                 "l1b", // "l1n_b",
-                "l2xb", "l2fb", "l3xb", "l3fb", // "l4wdl_xb",
-                // "l4wdl_fb",
-                "l4xb", "l4fb",
+                "l2b", "l3b",
+                // "l3wdlb",
             ],
             P { min_weight: -128.0, max_weight: 128.0, decay: 0.0, ..base },
         ),
@@ -187,8 +185,14 @@ fn main() {
 
     saves.extend(
         [
-            "l0tippb", "l1w", "l1b", // "l1n_g", "l1n_b",
-            "l2xw", "l2fw", "l2xb", "l2fb", "l3xw", "l3fw", "l3xb", "l3fb", "l4xw", "l4fw", "l4xb", "l4fb",
+            "l0tippb",
+            "l0material",
+            "l1w",
+            "l1b", // "l1n_g", "l1n_b",
+            "l2w",
+            "l2b",
+            "l3w",
+            "l3b",
         ]
         .map(SavedFormat::id),
     );
@@ -213,21 +217,22 @@ fn main() {
             let mut l0psqt = builder.new_weights("l0psqt", Shape::new(L1, psqt.num_inputs()), psqt_init);
             l0psqt = l0psqt + l0fac.repeat(psqt.num_inputs() / 768);
 
+            let l0material =
+                builder.new_weights("l0material", Shape::new(L1, NUM_OUTPUT_BUCKETS), InitSettings::Zeroed);
+
             // layerstack weights
-            let l1 = builder.new_affine("l1", L1, NUM_OUTPUT_BUCKETS * D);
-            let l2x = builder.new_affine("l2x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
-            let l2f = builder.new_affine("l2f", D, D * PROJ * 2);
-            let l3x = builder.new_affine("l3x", D, NUM_OUTPUT_BUCKETS * D * PROJ * 2);
-            let l3f = builder.new_affine("l3f", D, D * PROJ * 2);
-            let l4x = builder.new_affine("l4x", D, NUM_OUTPUT_BUCKETS * HEADS);
-            let l4f = builder.new_affine("l4f", D, HEADS);
+            let l1 = builder.new_affine("l1", L1, D);
+            let l2 = builder.new_affine("l2", D, D * PROJ * 2);
+            let l3 = builder.new_affine("l3", D, HEADS);
             // auxiliary WDL-classification head, training-only (not saved)
-            // let l4wdl_x = builder.new_affine("l4wdl_x", D, NUM_OUTPUT_BUCKETS * 3);
-            // let l4wdl_f = builder.new_affine("l4wdl_f", D, 3);
+            // let l3wdl = builder.new_affine("l3wdl", D, 3);
 
             // inference
             let ft = |tipp, psqt, start, end| {
-                (l0tipp.slice(start, end).forward(tipp) + l0psqt.slice_rows(start, end).matmul(psqt)).crelu()
+                (l0tipp.slice(start, end).forward(tipp)
+                    + l0psqt.slice_rows(start, end).matmul(psqt)
+                    + l0material.slice_rows(start, end).matmul(buckets))
+                .crelu()
             };
             let stm_subnet = ft(stm_tipp, stm_psqt, 0, L1 / 2) * ft(stm_tipp, stm_psqt, L1 / 2, L1);
             let ntm_subnet = ft(ntm_tipp, ntm_psqt, 0, L1 / 2) * ft(ntm_tipp, ntm_psqt, L1 / 2, L1);
@@ -236,22 +241,21 @@ fn main() {
             // L₁-norm penalty on accumulator (mean, since values are non-negative):
             let l0_out_norm = l0_out.reduce_sum_rows() / L1 as f32;
 
-            let l1_out = l1.forward(l0_out).select(buckets);
+            let l1_out = l1.forward(l0_out);
             let l1_out = hard_swish(l1_out);
 
             // let l1n_out = rms_norm(builder, "l1n", l1_out);
             let l1n_out = l1_out; // todo: test norm.
 
-            let l2_out = glu(l2x, l2f, l1n_out, buckets) + l1_out;
-            let l3_out = glu(l3x, l3f, l2_out, buckets) + l2_out;
+            let l2_out = glu(l2, l1n_out) + l1_out;
 
-            let l4_out = l4x.forward(l3_out).select(buckets) + l4f.forward(l3_out);
+            let l3_out = l3.forward(l2_out);
 
             let loss = if HEADS == 3 {
                 // -------- MSE --------
-                let loss = l4_out.slice_rows(0, 1);
-                let draw = l4_out.slice_rows(1, 2);
-                let win = l4_out.slice_rows(2, 3);
+                let loss = l3_out.slice_rows(0, 1);
+                let draw = l3_out.slice_rows(1, 2);
+                let win = l3_out.slice_rows(2, 3);
 
                 let max = loss.max(draw.max(win));
 
@@ -272,7 +276,7 @@ fn main() {
                 let mse_loss = mse_result.squared_error(target_value);
 
                 // -------- CE --------
-                let ce_loss = l4_out.softmax_crossentropy_loss(targets).reduce_sum_rows();
+                let ce_loss = l3_out.softmax_crossentropy_loss(targets).reduce_sum_rows();
 
                 let loss = mse_loss + 0.1 * ce_loss;
 
@@ -282,16 +286,16 @@ fn main() {
                 let target_value = targets.slice_rows(0, 1);
                 // let target_wdl = targets.slice_rows(1, 4);
 
-                let value_loss = l4_out.sigmoid().squared_error(target_value);
+                let value_loss = l3_out.sigmoid().squared_error(target_value);
 
-                // let wdl_logits = l4wdl_x.forward(l3_out).select(buckets) + l4wdl_f.forward(l3_out);
+                // let wdl_logits = l3wdl.forward(l2_out);
                 // let wdl_loss = wdl_logits.softmax_crossentropy_loss(target_wdl).reduce_sum_rows();
                 // let wdl_logit_norm = (wdl_logits * wdl_logits).reduce_sum_rows();
 
                 value_loss + 0.005 * l0_out_norm // + WDL_CE_ALPHA * wdl_loss + WDL_Z_BETA * wdl_logit_norm;
             };
 
-            (Some(loss.reduce_sum_batch()), vec![("output".to_string(), l4_out)])
+            (Some(loss.reduce_sum_batch()), vec![("output".to_string(), l3_out)])
         },
     );
 
@@ -489,8 +493,8 @@ fn main() {
     }
 }
 
-fn glu<'a>(x: Affine<'a>, f: Affine<'a>, input: ModelNode<'a>, buckets: ModelNode<'a>) -> ModelNode<'a> {
-    let proj = x.forward(input).select(buckets) + f.forward(input);
+fn glu<'a>(layer: Affine<'a>, input: ModelNode<'a>) -> ModelNode<'a> {
+    let proj = layer.forward(input);
     let gate = hard_swish(proj.slice_rows(0, D * PROJ));
     let id = proj.slice_rows(D * PROJ, D * PROJ * 2);
     gate * id
