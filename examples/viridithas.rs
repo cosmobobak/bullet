@@ -28,7 +28,7 @@ use crate::tipp_inputs::TiPpInputs;
 
 mod tipp_inputs;
 
-const NET_ID: &str = "hyperion-arch";
+const NET_ID: &str = "phoebe";
 
 const CHECKPOINT_DIR: &str = "checkpoints";
 
