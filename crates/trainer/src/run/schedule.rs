@@ -35,6 +35,7 @@ pub struct TrainingSchedule {
     pub lr_schedule: Box<dyn Fn(Step) -> f32>,
     pub log_rate: usize,
     pub track_grad_norms: bool,
+    pub accumulation_steps: usize,
 }
 
 impl Default for TrainingSchedule {
@@ -44,6 +45,7 @@ impl Default for TrainingSchedule {
             lr_schedule: Box::new(|_| 0.001),
             log_rate: 128,
             track_grad_norms: false,
+            accumulation_steps: 1,
         }
     }
 }

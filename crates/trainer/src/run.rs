@@ -1,3 +1,4 @@
+mod accumulate;
 mod dataloader;
 pub mod events;
 pub mod logger;
@@ -20,6 +21,8 @@ use bullet_gpu::{
 };
 
 use crate::optimiser::{Optimiser, OptimiserState};
+
+use accumulate::GradientAccumulator;
 
 #[cfg(not(any(feature = "cuda", feature = "rocm")))]
 pub type DefaultDevice = Device<runtime::mock::MockGpu>;
@@ -106,8 +109,11 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
     let props = device.props();
 
     let steps = schedule.steps;
+    let accumulation_steps = schedule.accumulation_steps;
 
     if steps.batch_size == 0
+        || accumulation_steps == 0
+        || !steps.batches_per_superbatch.is_multiple_of(accumulation_steps)
         || steps.batches_per_superbatch == 0
         || steps.start_superbatch == 0
         || steps.start_superbatch > steps.end_superbatch
@@ -178,7 +184,10 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
         None
     };
 
-    let tgf = TValue::F32(vec![1.0 / steps.batch_size as f32]);
+    let accumulator =
+        GradientAccumulator::new(&device, &gradients, accumulation_steps).map_err(TrainingError::Unexpected)?;
+
+    let tgf = TValue::F32(vec![1.0 / (steps.batch_size * accumulation_steps) as f32]);
     let tgf = Buffer::from_host(&device, &tgf).map_err(TrainingError::Unexpected)?;
     let tlr = Buffer::from_host(&device, &TValue::F32(vec![0.0])).map_err(TrainingError::Unexpected)?;
     let loss = Buffer::from_host(&device, &TValue::F32(vec![0.0])).map_err(TrainingError::Unexpected)?;
@@ -235,9 +244,16 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
 
         lrdrop.value().map_err(TrainingError::Unexpected)?;
 
-        let compute_block2 = optimiser
-            .update(&compute_stream, tgf.clone(), tlr.clone(), &gradients)
+        let group_batch = step.batch() % accumulation_steps;
+
+        let mut compute_block2 = accumulator
+            .accumulate(&compute_stream, &gradients, group_batch == 0)
             .map_err(TrainingError::OptimiserUpdateError)?;
+
+        if group_batch == accumulation_steps - 1 {
+            let sync = optimiser.update(&compute_stream, tgf.clone(), tlr.clone(), accumulator.sums());
+            compute_block2.extend_by(sync.map_err(TrainingError::OptimiserUpdateError)?);
+        }
 
         if let Ok(next_batch_host) = receiver.recv() {
             drop(
