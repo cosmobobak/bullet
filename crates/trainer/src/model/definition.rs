@@ -5,7 +5,6 @@ use bullet_compiler::{
     model::{Layout, MType, ModelBuilder, ModelIR, ModelNode},
     tensor::{
         DType, DValue, IRTrace, TValue, TensorIR,
-        operation::{CABinary, Matmul, MatrixLayout, PadAcrossDimension},
         transform::{
             autograd::{LowerForward, TakeGradient},
             canonicalise::CanonicalisePass,
@@ -16,11 +15,9 @@ use bullet_compiler::{
 
 use crate::model::{ModelInputs, inputs::InputType};
 
-type NodeMap = BTreeMap<NodeId, NodeId>;
-
 pub struct ModelFunctionDefinition {
     ir: TensorIR,
-    map: NodeMap,
+    map: BTreeMap<NodeId, NodeId>,
 }
 
 impl ModelFunctionDefinition {
@@ -28,7 +25,7 @@ impl ModelFunctionDefinition {
         &self.ir
     }
 
-    pub fn map(&self) -> &NodeMap {
+    pub fn map(&self) -> &BTreeMap<NodeId, NodeId> {
         &self.map
     }
 }
@@ -39,13 +36,6 @@ pub struct ModelDefinition {
     outputs: Vec<(NodeId, String)>,
     /// Enable validation of compiler passes in `TensorIR` compiled from this definition
     pub debug: bool,
-}
-
-pub struct GradNorms {
-    /// Node with a sequence of gradient norms.
-    pub acc: NodeId,
-    /// Associated names of parameter groups.
-    pub names: Vec<String>,
 }
 
 impl ModelDefinition {
@@ -102,12 +92,7 @@ impl ModelDefinition {
         &self,
         frozen: &BTreeSet<NodeId>,
         batch_size: usize,
-        track_grad_norms: bool,
-    ) -> Result<(ModelFunctionDefinition, NodeMap, Option<GradNorms>), IRTrace> {
-        // if track_grad_norms is on,              ^^^^^^^^^^^^^^^^^
-        // return a node with that in it,
-        // and the associated param group names.
-
+    ) -> Result<(ModelFunctionDefinition, BTreeMap<NodeId, NodeId>), IRTrace> {
         let (mut bwd, map) = self.ir.lower(batch_size)?;
         bwd.debug = self.debug;
 
@@ -123,56 +108,30 @@ impl ModelDefinition {
         bwd.transform(transform)?;
 
         let mut gmap = BTreeMap::default();
-        let mut sqnorms = Vec::new();
 
-        for (&id, (name, _)) in self.ir.weights() {
+        for &id in self.ir.weights().keys() {
             if !frozen.contains(&id) {
                 let wid = *map.get(&id).unwrap();
-                let ty = self.ir.node(id).ty();
-                let size = ty.shape().size();
-                let Layout::Dense(dtype) = ty.layout() else { unreachable!() };
 
                 // weights with no path to the loss have zero gradient
-                let gid =
-                    grads.borrow().get(&wid).copied().unwrap_or_else(|| bwd.add_scalar(DValue::zero(dtype), size));
-
-                if track_grad_norms {
-                    let lhs = MatrixLayout { rows: 1.into(), cols: size.into(), col_mjr: true };
-                    let rhs = MatrixLayout { rows: size.into(), cols: 1.into(), col_mjr: true };
-                    sqnorms.push((name.clone(), bwd.add_op([gid, gid], Matmul::new(dtype, 1, lhs, rhs))?[0]));
-                }
+                let gid = match grads.borrow().get(&wid).copied() {
+                    Some(gid) => gid,
+                    None => {
+                        let ty = self.ir.node(id).ty();
+                        let Layout::Dense(dtype) = ty.layout() else { unreachable!() };
+                        bwd.add_scalar(DValue::zero(dtype), ty.shape().size())
+                    }
+                };
 
                 bwd.register_output(gid);
                 gmap.insert(id, gid);
             }
         }
 
-        // cat squared norms into a single vector
-        // [a, b, c] = [a, 0, 0]
-        //           + [0, b, 0]
-        //           + [0, 0, c]
-        let norms = if sqnorms.is_empty() {
-            None
-        } else {
-            let (names, sqnorms) = sqnorms.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
-            let n = sqnorms.len();
-
-            let mut cat = bwd.add_scalar(DValue::zero(DType::F32), n);
-            for (i, sqnorm) in sqnorms.into_iter().enumerate() {
-                let pad = PadAcrossDimension::new([1], 0, i, n - 1 - i, DValue::zero(DType::F32));
-                let term = bwd.add_op([sqnorm], pad)?[0];
-                cat = bwd.add_binary(cat, term, CABinary::Add)?;
-            }
-
-            bwd.register_output(cat);
-
-            Some(GradNorms { acc: cat, names })
-        };
-
         bwd.transform(LowerForward)?;
         bwd.transform(InlineSubgraphs)?;
         bwd.optimise()?;
 
-        Ok((ModelFunctionDefinition { ir: bwd, map }, gmap, norms))
+        Ok((ModelFunctionDefinition { ir: bwd, map }, gmap))
     }
 }

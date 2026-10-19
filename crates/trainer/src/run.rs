@@ -2,6 +2,7 @@ mod accumulate;
 mod dataloader;
 pub mod events;
 pub mod logger;
+mod norms;
 mod schedule;
 
 pub use dataloader::{DataLoader, DataLoadingError, HostPool, PreparedBatchHost};
@@ -12,7 +13,7 @@ use std::{collections::BTreeMap, sync::mpsc, thread, time::Instant};
 
 use bullet_compiler::{
     model::Layout,
-    tensor::{DType, IRTrace, TValue},
+    tensor::{IRTrace, TValue},
 };
 use bullet_gpu::{
     buffer::{Buffer, SyncOnValue},
@@ -23,6 +24,7 @@ use bullet_gpu::{
 use crate::optimiser::{Optimiser, OptimiserState};
 
 use accumulate::GradientAccumulator;
+use norms::GradNorms;
 
 #[cfg(not(any(feature = "cuda", feature = "rocm")))]
 pub type DefaultDevice = Device<runtime::mock::MockGpu>;
@@ -150,9 +152,8 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
     });
 
     let defn = optimiser.definition();
-    let (func, gmap, norms) = defn
-        .lower_backward(&Default::default(), steps.batch_size, schedule.track_grad_norms)
-        .map_err(TrainingError::CompilingBackwards)?;
+    let (func, gmap) =
+        defn.lower_backward(&Default::default(), steps.batch_size).map_err(TrainingError::CompilingBackwards)?;
     let map = func.map();
     let mut backwards = Function::new(device.clone(), func.ir().clone()).map_err(TrainingError::CompilingBackwards)?;
     backwards.prealloc().map_err(TrainingError::Unexpected)?;
@@ -175,17 +176,10 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
         gradients.insert(name.clone(), grad);
     }
 
-    // squared gradient norms
-    let norms = if let Some(norms) = norms {
-        let buf = Buffer::zeroed(&device, DType::F32, norms.names.len()).map_err(TrainingError::Unexpected)?;
-        tensor_map.insert(norms.acc, buf.clone());
-        Some((norms.names, buf))
-    } else {
-        None
-    };
-
     let accumulator =
         GradientAccumulator::new(&device, &gradients, accumulation_steps).map_err(TrainingError::Unexpected)?;
+
+    let grad_norms = if schedule.track_grad_norms { Some(GradNorms::new(&device, &gradients)?) } else { None };
 
     let tgf = TValue::F32(vec![1.0 / (steps.batch_size * accumulation_steps) as f32]);
     let tgf = Buffer::from_host(&device, &tgf).map_err(TrainingError::Unexpected)?;
@@ -245,12 +239,19 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
         lrdrop.value().map_err(TrainingError::Unexpected)?;
 
         let group_batch = step.batch() % accumulation_steps;
+        let group_end = group_batch == accumulation_steps - 1;
 
         let mut compute_block2 = accumulator
             .accumulate(&compute_stream, &gradients, group_batch == 0)
             .map_err(TrainingError::OptimiserUpdateError)?;
 
-        if group_batch == accumulation_steps - 1 {
+        let pending_norms = grad_norms
+            .as_ref()
+            .filter(|_| group_end)
+            .map(|norms| norms.execute(compute_stream.clone(), accumulator.sums()));
+        let pending_norms = pending_norms.transpose().map_err(TrainingError::Unexpected)?;
+
+        if group_end {
             let sync = optimiser.update(&compute_stream, tgf.clone(), tlr.clone(), accumulator.sums());
             compute_block2.extend_by(sync.map_err(TrainingError::OptimiserUpdateError)?);
         }
@@ -286,21 +287,8 @@ pub fn train_with_observer<G: Gpu, O: OptimiserState<G>>(
 
         running_loss += error;
 
-        let grad_norm = if let Some((names, buf)) = &norms {
-            let TValue::F32(sqnorms) = buf
-                .to_host_async(&copy_stream)
-                .map(SyncOnValue::value)
-                .map_err(TrainingError::Unexpected)?
-                .map_err(TrainingError::Unexpected)?
-            else {
-                panic!()
-            };
-
-            let norms = sqnorms.iter().map(|sq| sq.sqrt() / steps.batch_size as f32);
-            Some(names.iter().cloned().zip(norms).collect())
-        } else {
-            None
-        };
+        let grad_norm = pending_norms.map(|norms| norms.read(&copy_stream, steps.batch_size * accumulation_steps));
+        let grad_norm = grad_norm.transpose().map_err(TrainingError::Unexpected)?;
 
         observer(&TrainingEvent::BatchCompleted {
             step,
