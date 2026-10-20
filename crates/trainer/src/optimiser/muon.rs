@@ -37,7 +37,7 @@ use bullet_gpu::{
     buffer::Buffer,
     function::Function,
     kernel::{CompiledKernel, KernelSrc},
-    pointwise::PointwiseBuilder,
+    pointwise::{PointwiseBuilder, PointwiseNode},
     runtime::{Device, DeviceProps, Gpu, Stream},
 };
 
@@ -73,28 +73,63 @@ impl Default for MuonMatrixParams {
 #[derive(Clone, Copy, Debug)]
 pub struct MuonParams {
     pub use_muon: bool,
+    pub buckets: usize,
     pub muon: MuonMatrixParams,
     pub adam: AdamWParams,
 }
 
 impl Default for MuonParams {
     fn default() -> Self {
-        Self { use_muon: true, muon: MuonMatrixParams::default(), adam: AdamWParams::default() }
+        Self { use_muon: true, buckets: 1, muon: MuonMatrixParams::default(), adam: AdamWParams::default() }
     }
 }
 
 impl MuonParams {
-    fn muon_eligible(&self, shape: Shape) -> bool {
-        self.use_muon && shape.rows() > 1 && shape.cols() > 1
+    fn layout(&self, shape: Shape) -> Result<Option<BucketLayout>, String> {
+        if self.buckets == 0 || !shape.rows().is_multiple_of(self.buckets) {
+            return Err(format!("Cannot split {} rows into {} buckets", shape.rows(), self.buckets));
+        }
+
+        let layout = BucketLayout { rows: shape.rows() / self.buckets, cols: shape.cols(), buckets: self.buckets };
+        Ok((self.use_muon && layout.rows > 1 && layout.cols > 1).then_some(layout))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BucketLayout {
+    rows: usize,
+    cols: usize,
+    buckets: usize,
+}
+
+impl BucketLayout {
+    fn size(&self) -> usize {
+        self.rows * self.cols * self.buckets
+    }
+
+    fn builder(&self) -> (PointwiseBuilder, u8) {
+        let p2size = self.rows.trailing_zeros().min(2) as u8;
+        (PointwiseBuilder::new(self.size() >> p2size), p2size)
+    }
+
+    fn bucket_major<'a>(&self, idx: PointwiseNode<'a>, p2size: u8) -> PointwiseNode<'a> {
+        if self.buckets == 1 {
+            return idx;
+        }
+
+        let rows = (self.rows >> p2size) as i32;
+        let (rest, row) = idx.div_rem(rows);
+        let (col, bucket) = rest.div_rem(self.buckets as i32);
+        bucket * (rows * self.cols as i32) + col * rows + row
     }
 }
 
 /// `momentum ← momentum.lerp(g, 1 - beta)` and `u₀ ← g.lerp(momentum, beta)`,
 /// where `g = gradient_factor * gradient`.
-fn build_momentum_op(size: usize, beta: f32, props: &DeviceProps) -> Result<KernelSrc, IRTrace> {
-    let (builder, p2size) = PointwiseBuilder::vectorised(size);
+fn build_momentum_op(layout: BucketLayout, beta: f32, props: &DeviceProps) -> Result<KernelSrc, IRTrace> {
+    let (builder, p2size) = layout.builder();
 
-    let ty = TType::new(size, DType::F32);
+    let ty = TType::new(layout.size(), DType::F32);
 
     let adj_buf = builder.new_buffer(TType::new(1, DType::F32));
     let grad_buf = builder.new_buffer(ty);
@@ -109,7 +144,7 @@ fn build_momentum_op(size: usize, beta: f32, props: &DeviceProps) -> Result<Kern
     let update = (1.0 - beta) * grad + beta * momentum;
 
     momentum_buf.write(tid, momentum);
-    update_buf.write(tid, update);
+    update_buf.write(layout.bucket_major(tid, p2size), update);
 
     builder.ir().eliminate_common_subexprs()?;
 
@@ -117,10 +152,10 @@ fn build_momentum_op(size: usize, beta: f32, props: &DeviceProps) -> Result<Kern
 }
 
 /// `weight <- clamp(weight * (1 - lr * decay) - lr * u, min, max)`.
-fn build_apply_op(size: usize, params: &MuonMatrixParams, props: &DeviceProps) -> Result<KernelSrc, IRTrace> {
-    let (builder, p2size) = PointwiseBuilder::vectorised(size);
+fn build_apply_op(layout: BucketLayout, params: &MuonMatrixParams, props: &DeviceProps) -> Result<KernelSrc, IRTrace> {
+    let (builder, p2size) = layout.builder();
 
-    let ty = TType::new(size, DType::F32);
+    let ty = TType::new(layout.size(), DType::F32);
 
     let rate_buf = builder.new_buffer(TType::new(1, DType::F32));
     let update_buf = builder.new_buffer(ty);
@@ -130,7 +165,7 @@ fn build_apply_op(size: usize, params: &MuonMatrixParams, props: &DeviceProps) -
 
     let tid = builder.tid();
     let weight = weight_buf.read(tid, p2size) * (1.0 - params.weight_decay * rate);
-    let weight = weight - rate * update_buf.read(tid, p2size);
+    let weight = weight - rate * update_buf.read(layout.bucket_major(tid, p2size), p2size);
 
     weight_buf.write(tid, weight.max(params.min_weight).min(params.max_weight));
 
@@ -140,16 +175,13 @@ fn build_apply_op(size: usize, params: &MuonMatrixParams, props: &DeviceProps) -
 }
 
 /// Newton-Schulz orthogonalisation as a `Function`.
-///
-/// in: raw update `U₀` (flat buffer of `rows × cols`).
-/// out: orthogonalised and scaled update.
 fn build_ns_function<G: Gpu>(
     device: &Arc<Device<G>>,
-    shape: Shape,
+    layout: BucketLayout,
     steps: usize,
 ) -> Result<(Function<G>, NodeId, NodeId), G::Error> {
     let g = IRBuilder::default();
-    let (x_in, x_out) = build_ns_graph(&g, shape, steps).map_err(|e| format!("Failed to build Muon NS graph: {e}"))?;
+    let (x_in, x_out) = build_ns_graph(&g, layout, steps).map_err(|e| format!("Failed to build Muon NS graph: {e}"))?;
     let (in_id, out_id) = (x_in.node(), x_out.node());
 
     let ir = g.build([x_out]);
@@ -178,24 +210,28 @@ fn build_ns_function<G: Gpu>(
 ///         X = X.T
 ///     return X
 /// ```
-fn build_ns_graph<'a>(g: &'a IRBuilder, shape: Shape, ns_steps: usize) -> Result<(TNode<'a>, TNode<'a>), IRTrace> {
-    let (rows, cols) = (shape.rows(), shape.cols());
-    let n = shape.size();
+fn build_ns_graph<'a>(
+    g: &'a IRBuilder,
+    layout: BucketLayout,
+    ns_steps: usize,
+) -> Result<(TNode<'a>, TNode<'a>), IRTrace> {
+    let BucketLayout { rows, cols, buckets } = layout;
+    let n = rows * cols;
     let (a, b, c) = NS_COEFFS;
 
-    let x_in = g.add_input(n, DType::F32);
+    let x_in = g.add_input(layout.size(), DType::F32);
 
     // X.norm() in Pytorch is the same as torch.linalg.matrix_norm,
     // which (by default) applies something called the Frobenius
     // norm. See <https://en.wikipedia.org/wiki/Matrix_norm#Frobenius_norm>.
     // Thankfully, it appears to literally just be the l₂ norm of
     // the flattened matrix.
-    let norm = (x_in * x_in)?.reduce_sum([1usize, n], 1)?.sqrt()?;
-    let inv = (1.0f32 / (norm + 1e-7f32)?)?.broadcast([1usize, 1usize], 1, n)?;
+    let norm = (x_in * x_in)?.reduce_sum([buckets, n], 1)?.sqrt()?;
+    let inv = (1.0f32 / (norm + 1e-7f32)?)?.broadcast([buckets, 1], 1, n)?;
     let mut x = (x_in * inv)?;
 
     let matmul = |lhs: TNode<'a>, rhs: TNode<'a>, llayout, rlayout| -> Result<_, IRTrace> {
-        Ok(g.add_op([lhs, rhs], Matmul::new(DType::F32, 1, llayout, rlayout)?)?[0])
+        Ok(g.add_op([lhs, rhs], Matmul::new(DType::F32, buckets, llayout, rlayout)?)?[0])
     };
 
     // the Pytorch listing transposes and then untransposes the
@@ -260,15 +296,14 @@ struct MuonOps<G: Gpu> {
 }
 
 impl<G: Gpu> MuonOps<G> {
-    fn new(device: &Arc<Device<G>>, shape: Shape, params: MuonMatrixParams) -> Result<Self, G::Error> {
+    fn new(device: &Arc<Device<G>>, layout: BucketLayout, params: MuonMatrixParams) -> Result<Self, G::Error> {
         if params.max_weight < params.min_weight {
             return Err(format!("Invalid clipping: {} >= {}", params.min_weight, params.max_weight).into());
         }
 
-        let size = shape.size();
-        let momentum = build_momentum_op(size, params.momentum, device.props()).unwrap().compile(device.clone())?;
-        let apply = build_apply_op(size, &params, device.props()).unwrap().compile(device.clone())?;
-        let (ns, ns_in, ns_out) = build_ns_function(device, shape, params.ns_steps)?;
+        let momentum = build_momentum_op(layout, params.momentum, device.props()).unwrap().compile(device.clone())?;
+        let apply = build_apply_op(layout, &params, device.props()).unwrap().compile(device.clone())?;
+        let (ns, ns_in, ns_out) = build_ns_function(device, layout, params.ns_steps)?;
 
         Ok(Self { momentum, apply, ns, ns_in, ns_out })
     }
@@ -282,14 +317,14 @@ struct MuonState<G: Gpu> {
 }
 
 impl<G: Gpu> MuonState<G> {
-    fn new(device: &Arc<Device<G>>, shape: Shape, params: MuonMatrixParams) -> Result<Self, G::Error> {
-        let zeros = || Buffer::from_host(device, &TValue::zeros(DType::F32, shape.size()));
+    fn new(device: &Arc<Device<G>>, layout: BucketLayout, params: MuonMatrixParams) -> Result<Self, G::Error> {
+        let zeros = || Buffer::from_host(device, &TValue::zeros(DType::F32, layout.size()));
 
         Ok(Self {
             momentum: zeros()?,
             raw_update: zeros()?,
             ortho_update: zeros()?,
-            ops: MuonOps::new(device, shape, params)?,
+            ops: MuonOps::new(device, layout, params)?,
         })
     }
 
@@ -322,9 +357,14 @@ impl<G: Gpu> MuonState<G> {
         Ok(sync)
     }
 
-    fn set_params(&mut self, device: &Arc<Device<G>>, shape: Shape, params: MuonMatrixParams) -> Result<(), G::Error> {
+    fn set_params(
+        &mut self,
+        device: &Arc<Device<G>>,
+        layout: BucketLayout,
+        params: MuonMatrixParams,
+    ) -> Result<(), G::Error> {
         self.ops.ns.dealloc_preallocs()?;
-        self.ops = MuonOps::new(device, shape, params)?;
+        self.ops = MuonOps::new(device, layout, params)?;
         Ok(())
     }
 }
@@ -343,10 +383,9 @@ enum Inner<G: Gpu> {
 
 impl<G: Gpu> Inner<G> {
     fn new(device: &Arc<Device<G>>, shape: Shape, params: MuonParams) -> Result<Self, G::Error> {
-        Ok(if params.muon_eligible(shape) {
-            Self::Muon(Box::new(MuonState::new(device, shape, params.muon)?))
-        } else {
-            Self::Adam(Box::new(<AdamW<G> as OptimiserState<G>>::new(device, shape, params.adam)?))
+        Ok(match params.layout(shape)? {
+            Some(layout) => Self::Muon(Box::new(MuonState::new(device, layout, params.muon)?)),
+            None => Self::Adam(Box::new(<AdamW<G> as OptimiserState<G>>::new(device, shape, params.adam)?)),
         })
     }
 }
@@ -382,9 +421,9 @@ impl<G: Gpu> OptimiserState<G> for Muon<G> {
     }
 
     fn set_params(&mut self, params: Self::Params) -> Result<(), G::Error> {
-        match (&mut self.inner, params.muon_eligible(self.shape)) {
-            (Inner::Muon(state), true) => state.set_params(&self.device, self.shape, params.muon),
-            (Inner::Adam(adam), false) => adam.set_params(params.adam),
+        match (&mut self.inner, params.layout(self.shape)?) {
+            (Inner::Muon(state), Some(layout)) => state.set_params(&self.device, layout, params.muon),
+            (Inner::Adam(adam), None) => adam.set_params(params.adam),
             _ => {
                 self.inner = Inner::Freed;
                 self.inner = Inner::new(&self.device, self.shape, params)?;
@@ -430,5 +469,3 @@ impl<G: Gpu> OptimiserState<G> for Muon<G> {
         AdamW::load_from_checkpoint(&mut adam, path)
     }
 }
-
-
