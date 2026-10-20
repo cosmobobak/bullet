@@ -34,6 +34,9 @@ impl TypeSystem for Tensor {
 pub struct TensorIR {
     ir: IR<Tensor>,
     outputs: BTreeSet<NodeId>,
+    /// Run `check_valid` after every edit
+    /// Useful for debugging compiler passes, slows compilation
+    pub debug: bool,
 }
 
 impl TensorIR {
@@ -89,9 +92,15 @@ impl TensorIR {
                 .collect::<Option<Vec<_>>>()
                 .ok_or("Output missing!")?;
 
-            op.data()
-                .0
-                .evaluate(op_inputs.iter().map(|x| &**x).collect(), op_outputs.iter_mut().map(|x| &mut **x).collect());
+            // inputs are seeded, anything else must be evaluable
+            if !op.data().is_input()
+                && !op.data().0.evaluate(
+                    op_inputs.iter().map(|x| &**x).collect(),
+                    op_outputs.iter_mut().map(|x| &mut **x).collect(),
+                )
+            {
+                return Ok(None);
+            }
         }
 
         let filter = |x: (_, RefCell<_>)| self.is_output(x.0).then(|| (x.0, x.1.into_inner()));
@@ -179,6 +188,10 @@ impl TensorIR {
 
     pub fn check_valid(&self) -> Result<(), IRTrace> {
         self.ir.check_valid().map_err(IRTrace::Root)
+    }
+
+    fn debug_check_edit(&self) -> Result<(), IRTrace> {
+        if self.debug { self.check_valid() } else { Ok(()) }
     }
 
     pub fn register_output(&mut self, node: NodeId) {

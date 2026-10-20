@@ -6,7 +6,7 @@ use std::{
 
 use crate::game::formats::bulletformat::ChessBoard;
 
-use super::rng::SimpleRand;
+use super::rng::seeded_rng;
 
 use bullet_trainer::reader::DataReader;
 use montyformat::{
@@ -31,7 +31,7 @@ impl<T: Fn(&Position, Move, i16, f32) -> bool> MontyBinpackLoader<T> {
         Self {
             file_paths: paths.iter().map(|x| x.to_string()).collect(),
             buffer_size: buffer_size_mb * 1024 * 1024 / std::mem::size_of::<ChessBoard>() / 2,
-            threads,
+            threads: threads.max(1),
             filter,
         }
     }
@@ -177,10 +177,10 @@ fn parse_into_buffer<T: Fn(&Position, Move, i16, f32) -> bool>(
 }
 
 fn shuffle(data: &mut [ChessBoard]) {
-    let mut rng = SimpleRand::with_seed();
+    let mut rng = seeded_rng();
 
     for i in (0..data.len()).rev() {
-        let idx = rng.rng() as usize % (i + 1);
+        let idx = rng.rand_range(0..i as u64 + 1) as usize;
         data.swap(idx, i);
     }
 }

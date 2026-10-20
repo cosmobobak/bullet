@@ -18,7 +18,7 @@ pub use sfbinpack::{
 
 use crate::game::formats::bulletformat::ChessBoard;
 
-use super::rng::SimpleRand;
+use super::rng::seeded_rng;
 
 fn convert_to_bulletformat(entry: &TrainingDataEntry) -> ChessBoard {
     let mut bbs = [0; 8];
@@ -64,7 +64,7 @@ impl<T: Fn(&TrainingDataEntry) -> bool> SfBinpackLoader<T> {
         Self {
             file_paths: paths.iter().map(|x| x.to_string()).collect(),
             buffer_size: buffer_size_mb * 1024 * 1024 / std::mem::size_of::<ChessBoard>() / 2,
-            threads,
+            threads: threads.max(1),
             filter,
         }
     }
@@ -215,10 +215,10 @@ where
 }
 
 fn shuffle(data: &mut [ChessBoard]) {
-    let mut rng = SimpleRand::with_seed();
+    let mut rng = seeded_rng();
 
     for i in (0..data.len()).rev() {
-        let idx = rng.rng() as usize % (i + 1);
+        let idx = rng.rand_range(0..i as u64 + 1) as usize;
         data.swap(idx, i);
     }
 }
