@@ -17,6 +17,7 @@ use std::{
 use bullet_compiler::{model::Shape, tensor::TValue};
 use bullet_gpu::{
     buffer::{Buffer, SyncOnValue},
+    function::Function,
     kernel::CompiledKernel,
     runtime::{Device, Gpu, Stream},
 };
@@ -25,12 +26,13 @@ use crate::model::{ModelDefinition, ModelWeights, TensorMap};
 
 pub struct OptimiserUpdateSync<'a, G: Gpu> {
     kernels: Vec<SyncOnValue<G, &'a CompiledKernel<G>>>,
+    functions: Vec<SyncOnValue<G, &'a Function<G>>>,
     copies: Vec<SyncOnValue<G, &'a TValue>>,
 }
 
 impl<'a, G: Gpu> Default for OptimiserUpdateSync<'a, G> {
     fn default() -> Self {
-        Self { kernels: Vec::new(), copies: Vec::new() }
+        Self { kernels: Vec::new(), functions: Vec::new(), copies: Vec::new() }
     }
 }
 
@@ -39,18 +41,27 @@ impl<'a, G: Gpu> OptimiserUpdateSync<'a, G> {
         self.kernels.push(val);
     }
 
+    pub fn push_function(&mut self, val: SyncOnValue<G, &'a Function<G>>) {
+        self.functions.push(val);
+    }
+
     pub fn push_copy(&mut self, val: SyncOnValue<G, &'a TValue>) {
         self.copies.push(val);
     }
 
     pub fn extend_by(&mut self, mut other: Self) {
         self.kernels.append(&mut other.kernels);
+        self.functions.append(&mut other.functions);
         self.copies.append(&mut other.copies);
     }
 
     pub fn sync(self) -> Result<(), G::Error> {
         for kernel in self.kernels {
             kernel.value()?;
+        }
+
+        for function in self.functions {
+            function.value()?;
         }
 
         for copy in self.copies {

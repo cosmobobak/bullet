@@ -16,6 +16,8 @@ use crate::optimiser::{OptimiserUpdateResult, OptimiserUpdateSync};
 
 use super::{
     OptimiserState,
+    adam::AdamW,
+    muon::Muon,
     radam::{RAdam, RAdamParams},
     utils,
     wrap::WrapOptimiser,
@@ -193,3 +195,7 @@ impl From<RangerParams> for RangerLookaheadParams<RAdamParams> {
         }
     }
 }
+
+pub type LookaheadAdamW<G> = RangerLookahead<G, AdamW<G>>;
+
+pub type LookaheadMuon<G> = RangerLookahead<G, Muon<G>>;

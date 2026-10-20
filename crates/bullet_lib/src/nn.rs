@@ -18,17 +18,19 @@ pub type ExecutionContext = bullet_gpu::runtime::mock::MockGpu;
 pub mod optimiser {
     use super::ExecutionContext;
 
-    use bullet_trainer::optimiser::{self, OptimiserState};
+    use bullet_trainer::optimiser::{self, OptimiserState, radam};
 
     pub type AdamWOptimiser = optimiser::adam::AdamW<ExecutionContext>;
-    pub type RAdamOptimiser = optimiser::radam::RAdam<ExecutionContext>;
+    pub type RAdamOptimiser = radam::RAdam<ExecutionContext>;
     pub type RangerOptimiser = optimiser::ranger::Ranger<ExecutionContext>;
-    pub type MuonOptimiser = optimiser::muon::MuonWithAuxAdamW<ExecutionContext>;
+    pub type LookaheadAdamWOptimiser = optimiser::ranger::LookaheadAdamW<ExecutionContext>;
+    pub type MuonOptimiser = optimiser::muon::Muon<ExecutionContext>;
+    pub type LookaheadMuonOptimiser = optimiser::ranger::LookaheadMuon<ExecutionContext>;
     pub use optimiser::{
         Optimiser,
         adam::AdamWParams,
-        muon::{MuonParams, MuonWithAuxAdamWParams},
-        ranger::RangerParams,
+        muon::{MuonMatrixParams, MuonParams},
+        ranger::{RangerLookaheadParams, RangerParams},
     };
 
     pub trait OptimiserType: Default {
@@ -53,17 +55,29 @@ pub mod optimiser {
         type Optimiser = RangerOptimiser;
     }
 
+    #[derive(Default)]
+    pub struct LookaheadAdamW;
+    impl OptimiserType for LookaheadAdamW {
+        type Optimiser = LookaheadAdamWOptimiser;
+    }
+
     /// Muon (with auxiliary AdamW for non-matrix / excluded weights).
     ///
     /// ```ignore
-    /// use bullet_lib::nn::optimiser::MuonWithAuxAdamParams;
-    /// let exclude = MuonWithAuxAdamParams { use_muon: false, ..Default::default() };
+    /// use bullet_lib::nn::optimiser::MuonParams;
+    /// let exclude = MuonParams { use_muon: false, ..Default::default() };
     /// trainer.optimiser.set_params_for_weight("l0w", exclude);
     /// ```
     #[derive(Default)]
     pub struct Muon;
     impl OptimiserType for Muon {
         type Optimiser = MuonOptimiser;
+    }
+
+    #[derive(Default)]
+    pub struct LookaheadMuon;
+    impl OptimiserType for LookaheadMuon {
+        type Optimiser = LookaheadMuonOptimiser;
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -75,9 +89,9 @@ pub mod optimiser {
         pub max_weight: f32,
     }
 
-    impl From<RAdamParams> for optimiser::radam::RAdamParams {
+    impl From<RAdamParams> for radam::RAdamParams {
         fn from(value: RAdamParams) -> Self {
-            optimiser::radam::RAdamParams {
+            radam::RAdamParams {
                 beta1: value.beta1,
                 beta2: value.beta2,
                 n_sma_threshold: 5.0,
