@@ -58,6 +58,8 @@ pub struct MuonMatrixParams {
     pub weight_decay: f32,
     /// Number of Newton-Schulz iterations
     pub ns_steps: usize,
+    /// Adam-like beta2 for NorMuon (<https://arxiv.org/abs/2510.05491>)
+    pub normuon: Option<f32>,
 
     pub min_weight: f32,
     pub max_weight: f32,
@@ -65,7 +67,14 @@ pub struct MuonMatrixParams {
 
 impl Default for MuonMatrixParams {
     fn default() -> Self {
-        Self { momentum: 0.95, weight_decay: 0.0, ns_steps: 5, min_weight: -1.98, max_weight: 1.98 }
+        Self {
+            momentum: 0.99,
+            weight_decay: 0.0,
+            ns_steps: 5,
+            normuon: Some(0.999),
+            min_weight: -1.98,
+            max_weight: 1.98,
+        }
     }
 }
 
@@ -178,20 +187,32 @@ fn build_apply_op(layout: BucketLayout, params: &MuonMatrixParams, props: &Devic
 fn build_ns_function<G: Gpu>(
     device: &Arc<Device<G>>,
     layout: BucketLayout,
-    steps: usize,
-) -> Result<(Function<G>, NodeId, NodeId), G::Error> {
+    params: &MuonMatrixParams,
+) -> Result<NsFunction<G>, G::Error> {
     let g = IRBuilder::default();
-    let (x_in, x_out) = build_ns_graph(&g, layout, steps).map_err(|e| format!("Failed to build Muon NS graph: {e}"))?;
-    let (in_id, out_id) = (x_in.node(), x_out.node());
+    let (x_in, x_out, variance) =
+        build_ns_graph(&g, layout, params).map_err(|e| format!("Failed to build Muon NS graph: {e}"))?;
+    let outputs: Vec<_> = [Some(x_out), variance.map(|(_, o)| o)].into_iter().flatten().collect();
+    let (x_in, x_out, variance) = (x_in.node(), x_out.node(), variance.map(|(i, o)| (i.node(), o.node())));
 
-    let ir = g.build([x_out]);
+    let ir = g.build(outputs);
     let mut func = Function::new(device.clone(), ir).map_err(|e| format!("Failed to compile Muon NS graph: {e}"))?;
     func.prealloc()?;
 
-    Ok((func, in_id, out_id))
+    Ok(NsFunction { func, x_in, x_out, variance })
 }
 
-/// constructs the Newton-Schulz function and returns its input and output nodes.
+/// The Newton-Schulz function, and its input/output nodes,
+/// and the second moment if NorMuon is enabled.
+struct NsFunction<G: Gpu> {
+    func: Function<G>,
+    x_in: NodeId,
+    x_out: NodeId,
+    variance: Option<(NodeId, NodeId)>,
+}
+
+/// constructs the Newton-Schulz function and returns its input and output nodes,
+/// and those of the per-neuron second moment if NorMuon is enabled.
 /// this function is adapted from the following Pytorch code:
 ///
 /// ```py
@@ -210,11 +231,12 @@ fn build_ns_function<G: Gpu>(
 ///         X = X.T
 ///     return X
 /// ```
+#[allow(clippy::type_complexity)]
 fn build_ns_graph<'a>(
     g: &'a IRBuilder,
     layout: BucketLayout,
-    ns_steps: usize,
-) -> Result<(TNode<'a>, TNode<'a>), IRTrace> {
+    params: &MuonMatrixParams,
+) -> Result<(TNode<'a>, TNode<'a>, Option<(TNode<'a>, TNode<'a>)>), IRTrace> {
     let BucketLayout { rows, cols, buckets } = layout;
     let n = rows * cols;
     let (a, b, c) = NS_COEFFS;
@@ -246,7 +268,7 @@ fn build_ns_graph<'a>(
     // A = X @ X.T
     // B = b * A + c * A @ A
     // X = a * X + B @ X
-    for _ in 0..ns_steps {
+    for _ in 0..params.ns_steps {
         let amat = if transposed { matmul(x, x, lx.transpose(), lx)? } else { matmul(x, x, lx, lx.transpose())? };
         let a2 = matmul(amat, amat, lk, lk)?;
         let bmat = ((amat * b)? + (a2 * c)?)?;
@@ -281,18 +303,31 @@ fn build_ns_graph<'a>(
     // Link to paper: <https://arxiv.org/pdf/2502.16982>
     //
     // Hence:
-    let scale = 0.2 * (rows.max(cols) as f32).sqrt();
-    let x = (x * scale)?;
+    let Some(beta2) = params.normuon else {
+        let scale = 0.2 * (rows.max(cols) as f32).sqrt();
+        return Ok((x_in, (x * scale)?, None));
+    };
 
-    Ok((x_in, x))
+    // NorMuon instead normalises each neuron's (row's) update by a running
+    // mean of its squared values, then scales each bucket to RMS 0.2
+    let variance_in = g.add_input(buckets * rows, DType::F32);
+    let row_sq = ((x * x)?.reduce_sum([buckets, cols, rows], 1)? * (1.0 / cols as f32))?;
+    let variance = ((variance_in * beta2)? + (row_sq * (1.0 - beta2))?)?;
+    let row_scale = (1.0f32 / (variance.sqrt()? + 1e-8f32)?)?;
+
+    let norm_sq = ((row_sq * (row_scale * row_scale)?)?.reduce_sum([buckets, rows], 1)? * cols as f32)?;
+    let scale = ((1.0f32 / (norm_sq.sqrt()? + 1e-12f32)?)? * (0.2 * (n as f32).sqrt()))?;
+
+    let x = (x * row_scale.broadcast([buckets, rows], 1, cols)?)?;
+    let x = (x * scale.broadcast([buckets, 1], 1, n)?)?;
+
+    Ok((x_in, x, Some((variance_in, variance))))
 }
 
 struct MuonOps<G: Gpu> {
     momentum: CompiledKernel<G>,
     apply: CompiledKernel<G>,
-    ns: Function<G>,
-    ns_in: NodeId,
-    ns_out: NodeId,
+    ns: NsFunction<G>,
 }
 
 impl<G: Gpu> MuonOps<G> {
@@ -303,9 +338,9 @@ impl<G: Gpu> MuonOps<G> {
 
         let momentum = build_momentum_op(layout, params.momentum, device.props()).unwrap().compile(device.clone())?;
         let apply = build_apply_op(layout, &params, device.props()).unwrap().compile(device.clone())?;
-        let (ns, ns_in, ns_out) = build_ns_function(device, layout, params.ns_steps)?;
+        let ns = build_ns_function(device, layout, &params)?;
 
-        Ok(Self { momentum, apply, ns, ns_in, ns_out })
+        Ok(Self { momentum, apply, ns })
     }
 }
 
@@ -313,6 +348,8 @@ struct MuonState<G: Gpu> {
     momentum: Arc<Buffer<G>>,
     raw_update: Arc<Buffer<G>>,
     ortho_update: Arc<Buffer<G>>,
+    /// in two buffers as `Function` can’t update in-place
+    variance: Option<[Arc<Buffer<G>>; 2]>,
     ops: MuonOps<G>,
 }
 
@@ -324,12 +361,23 @@ impl<G: Gpu> MuonState<G> {
             momentum: zeros()?,
             raw_update: zeros()?,
             ortho_update: zeros()?,
+            variance: Self::new_variance(device, layout, &params)?,
             ops: MuonOps::new(device, layout, params)?,
         })
     }
 
+    #[allow(clippy::type_complexity)]
+    fn new_variance(
+        device: &Arc<Device<G>>,
+        layout: BucketLayout,
+        params: &MuonMatrixParams,
+    ) -> Result<Option<[Arc<Buffer<G>>; 2]>, G::Error> {
+        let zeros = || Buffer::from_host(device, &TValue::zeros(DType::F32, layout.buckets * layout.rows));
+        params.normuon.map(|_| Ok([zeros()?, zeros()?])).transpose()
+    }
+
     fn update<'a>(
-        &'a self,
+        &'a mut self,
         stream: &Arc<Stream<G>>,
         weights: Arc<Buffer<G>>,
         grads: Arc<Buffer<G>>,
@@ -344,9 +392,14 @@ impl<G: Gpu> MuonState<G> {
             vec![self.momentum.clone(), self.raw_update.clone()],
         )?);
 
-        let io =
-            BTreeMap::from([(self.ops.ns_in, self.raw_update.clone()), (self.ops.ns_out, self.ortho_update.clone())]);
-        sync.push_function(self.ops.ns.execute(stream.clone(), &io)?);
+        let ns = &self.ops.ns;
+        let mut io = BTreeMap::from([(ns.x_in, self.raw_update.clone()), (ns.x_out, self.ortho_update.clone())]);
+        if let (Some((v_in, v_out)), Some(variance)) = (ns.variance, &mut self.variance) {
+            variance.swap(0, 1);
+            io.insert(v_in, variance[1].clone());
+            io.insert(v_out, variance[0].clone());
+        }
+        sync.push_function(ns.func.execute(stream.clone(), &io)?);
 
         sync.push_kernel(self.ops.apply.execute(
             stream.clone(),
@@ -363,8 +416,11 @@ impl<G: Gpu> MuonState<G> {
         layout: BucketLayout,
         params: MuonMatrixParams,
     ) -> Result<(), G::Error> {
-        self.ops.ns.dealloc_preallocs()?;
+        self.ops.ns.func.dealloc_preallocs()?;
         self.ops = MuonOps::new(device, layout, params)?;
+        if params.normuon.is_some() != self.variance.is_some() {
+            self.variance = Self::new_variance(device, layout, &params)?;
+        }
         Ok(())
     }
 }
@@ -415,7 +471,11 @@ impl<G: Gpu> OptimiserState<G> for Muon<G> {
     fn reset(&mut self) -> Result<(), G::Error> {
         match &mut self.inner {
             Inner::Adam(adam) => adam.reset(),
-            Inner::Muon(state) => state.momentum.copy_from_host(&TValue::zeros(DType::F32, state.momentum.size())),
+            Inner::Muon(state) => {
+                let zero = |buf: &Arc<Buffer<G>>| buf.copy_from_host(&TValue::zeros(DType::F32, buf.size()));
+                state.variance.iter().flatten().try_for_each(zero)?;
+                zero(&state.momentum)
+            }
             Inner::Freed => unreachable!(),
         }
     }
@@ -442,6 +502,15 @@ impl<G: Gpu> OptimiserState<G> for Muon<G> {
             .collect();
         utils::write_weights_to_file::<G>(&muon, &format!("{path}/muon_momentum.bin"))?;
 
+        let variance: Vec<_> = map
+            .iter()
+            .filter_map(|(id, single)| match &single.inner {
+                Inner::Muon(state) => state.variance.as_ref().map(|v| (id, &v[0])),
+                _ => None,
+            })
+            .collect();
+        utils::write_weights_to_file::<G>(&variance, &format!("{path}/muon_variance.bin"))?;
+
         let adam = map
             .iter()
             .filter_map(|(id, single)| match &single.inner {
@@ -456,6 +525,18 @@ impl<G: Gpu> OptimiserState<G> for Muon<G> {
         for (id, momentum) in utils::load_weights_from_file(&format!("{path}/muon_momentum.bin")) {
             if let Some(Inner::Muon(state)) = map.get_mut(&id).map(|single| &mut single.inner) {
                 state.momentum.copy_from_host(&TValue::F32(momentum))?;
+            }
+        }
+
+        let uses_normuon =
+            map.values().any(|single| matches!(&single.inner, Inner::Muon(state) if state.variance.is_some()));
+        if uses_normuon {
+            for (id, variance) in utils::load_weights_from_file(&format!("{path}/muon_variance.bin")) {
+                if let Some(Inner::Muon(state)) = map.get_mut(&id).map(|single| &mut single.inner)
+                    && let Some(buffers) = &state.variance
+                {
+                    buffers[0].copy_from_host(&TValue::F32(variance))?;
+                }
             }
         }
 
